@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+body {
+  font-family: 'Noto Sans Bengali', system-ui, sans-serif;
+}
+
