@@ -77,7 +77,7 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
         // Safety timeout in case the relay never sends EOSE
         setTimeout(close, timeoutMs);
       } catch (err) {
-        console.warn(`Relay ${relayUrl} failed:`, err.message);
+        console.warn(`Relay ${relayUrl} failed:`, err?.message ||err);
         close();
       }
     })();
@@ -85,8 +85,12 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
 }
 
 // Fetch recent kind-1 notes from all relays, merged and deduplicated.
-export async function fetchRecentNotes(limit = 30, timeoutMs = 4000) {
+export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 4000) {
   const filter = { kinds: [1] };
+  if (authors && authors.length > 0) {
+    filter.authors = authors;
+  }
+
   const results = await Promise.all(
     DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
   );
@@ -120,6 +124,32 @@ export async function fetchContactList(pubkey, timeoutMs = 4000) {
     .filter((t) => t[0] === "p")
     .map((t) => t[1]);
 }
+
+export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 4000) {
+  const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+
+  const filter = {
+    kinds: [1, 6, 7],
+    "#p": [pubkey],
+    since: sevenDaysAgo,
+  };
+
+  const results = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  );
+
+  const merged = new Map();
+  for (const relayEvents of results) {
+    for (const ev of relayEvents) {
+      if (!merged.has(ev.id)) merged.set(ev.id, ev);
+    }
+  }
+
+  const all = Array.from(merged.values());
+  all.sort((a, b) => b.created_at - a.created_at);
+  return all.slice(0, limit);
+}
+
 
 // =========================================================================
 // PUBLISHING — uses SimplePool for outbound writes (works fine)
@@ -219,3 +249,31 @@ export async function publishContactList(followedPubkeys, secretKey) {
     throw err;
   }
 }
+
+export async function fetchProfiles(pubkeys, timeoutMs = 3000) {
+  if (!pubkeys || pubkeys.length === 0) return new Map();
+
+  const filter = { kinds: [0], authors: pubkeys };
+  const results = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  );
+
+  const profileMap = new Map();
+  const all = results.flat();
+
+  // Kind 0 is replaceable — keep the newest per pubkey
+  all.sort((a, b) => b.created_at - a.created_at);
+  for (const ev of all) {
+    if (!profileMap.has(ev.pubkey)) {
+      try {
+        const metadata = JSON.parse(ev.content);
+        profileMap.set(ev.pubkey, metadata);
+      } catch {
+        // skip malformed metadata
+      }
+    }
+  }
+
+  return profileMap;
+}
+

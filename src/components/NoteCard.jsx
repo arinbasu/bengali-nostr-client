@@ -2,6 +2,7 @@ import { useState } from "react";
 import { nip19 } from "nostr-tools";
 import { publishReaction, publishRepost } from "../lib/nostr";
 import { useAccount } from "../contexts/useAccount";
+import { useProfile, getDisplayName } from "../contexts/useProfile";
 
 function timeAgo(timestamp) {
   const seconds = Math.floor(Date.now() / 1000) - timestamp;
@@ -18,11 +19,14 @@ export function NoteCard({ event }) {
   const [hasLiked, setHasLiked] = useState(false);
   const [hasReposted, setHasReposted] = useState(false);
   const { account, following, follow, unfollow } = useAccount();
+  const { profiles } = useProfile();
 
   const npub = nip19.npubEncode(event.pubkey);
   const shortNpub = `${npub.slice(0, 10)}...${npub.slice(-4)}`;
+  const profile = profiles.get(event.pubkey);
+  const displayName = getDisplayName(profile, "অজ্ঞাত ব্যবহারকারী");
 
-  const isFollowing = following.has(event.pubkey);
+  const isFollowing = following?.has(event.pubkey) ?? false;
   const isOwnNote = event.pubkey === account?.publicKey;
 
   const imetaTag = event.tags.find((t) => t[0] === "imeta");
@@ -33,7 +37,7 @@ export function NoteCard({ event }) {
   const handleFollowToggle = () => {
     if (isFollowing) unfollow(event.pubkey);
     else follow(event.pubkey);
-  }; // ← closing brace restored
+  };
 
   const handleLike = async () => {
     if (hasLiked || !account?.secretKey) return;
@@ -62,10 +66,23 @@ export function NoteCard({ event }) {
   return (
     <div className="bg-white px-4 py-3 border-b border-gray-100">
       <div className="flex gap-3">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex-shrink-0" />
+        {/* Avatar — sibling to content column */}
+        {profile?.picture ? (
+          <img
+            src={profile.picture}
+            alt=""
+            className="w-10 h-10 rounded-full flex-shrink-0 object-cover"
+          />
+        ) : (
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex-shrink-0" />
+        )}
+
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span className="font-medium text-gray-900">{shortNpub}</span>
+            <span className="font-medium text-gray-900" title={npub}>{displayName}
+              
+            </span>
+
 
             {!isOwnNote && (
               <button
