@@ -9,6 +9,7 @@ export function NoteList({ refreshTrigger, newNotes }) {
   const loadNotes = async () => {
     setLoading(true);
     const events = await fetchRecentNotes(30);
+    console.log("Fetched notes:", events.length); 
     setNotes(events);
     setLoading(false);
   };

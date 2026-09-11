@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { Akshar } from "akshar-typing";
-import { publishNote, getOrCreateKeypair } from "../lib/nostr";
+import { publishNote } from "../lib/nostr";     // ← Removed getOrCreateKeypair
 import { uploadImage } from "../lib/media";
+import { useAccount } from "../contexts/useAccount";
 
 export function NoteComposer({ onPublished }) {
   const [content, setContent] = useState("");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [status, setStatus] = useState("idle");
+  const { account } = useAccount();
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -19,6 +21,13 @@ export function NoteComposer({ onPublished }) {
 
   const handlePublish = async () => {
     if (!content.trim() && !file) return;
+
+    // Guard: prevent posting if there's no secret key (view-only mode)
+    if (!account?.secretKey) {
+      setStatus("error");
+      return;
+    }
+
     try {
       setStatus("uploading");
       let tags = [];
@@ -26,9 +35,10 @@ export function NoteComposer({ onPublished }) {
         const { url, mime } = await uploadImage(file);
         tags.push(["imeta", `url ${url}`, `m ${mime}`]);
       }
+
       setStatus("publishing");
-      const { secretKey } = getOrCreateKeypair();
-      const publishedEvent = await publishNote(content, secretKey, tags);
+      // ← FIXED: use the logged-in account's secret key
+      const publishedEvent = await publishNote(content, account.secretKey, tags);
 
       setStatus("done");
       setContent("");
