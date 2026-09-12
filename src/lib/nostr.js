@@ -277,3 +277,17 @@ export async function fetchProfiles(pubkeys, timeoutMs = 3000) {
   return profileMap;
 }
 
+export async function fetchEventById(eventId, relayHints = [], timeoutMs = 4000) {
+  if (!eventId) return null;
+
+  // Try relay hints first, then fall back to our default relays
+  const relays = [...new Set([...relayHints, ...DEFAULT_RELAYS])];
+
+  const results = await Promise.all(
+    relays.map((url) => fetchFromRelay(url, { ids: [eventId] }, timeoutMs))
+  );
+
+  const flat = results.flat();
+  return flat[0] || null;
+}
+
