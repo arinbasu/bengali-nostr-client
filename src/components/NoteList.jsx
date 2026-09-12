@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchRecentNotes } from "../lib/nostr";
 import { NoteCard } from "./NoteCard";
 import { useProfile } from "../contexts/useProfile";
+import { useAccount } from "../contexts/useAccount";
 
 // --- Junk detection helpers ---
 
@@ -43,12 +44,10 @@ function countMatches(text, regex) {
   return (text.match(regex) || []).length;
 }
 
-function isAllowedScript(text) {
-  // Allowed scripts
+function isAllowedScript(text, langFilter) {
   const bengali = countMatches(text, /[\u0980-\u09FF]/g);
   const latin = countMatches(text, /[a-zA-Z\u00C0-\u024F]/g);
 
-  // Disallowed scripts
   const cjk = countMatches(
     text,
     /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g
@@ -63,31 +62,54 @@ function isAllowedScript(text) {
   const hebrew = countMatches(text, /[\u0590-\u05FF]/g);
   const greek = countMatches(text, /[\u0370-\u03FF]/g);
 
-  const allowed = bengali + latin;
   const disallowed =
     cjk + hangul + cyrillic + arabic + devanagari +
     tamil + telugu + thai + hebrew + greek;
 
-  if (allowed === 0) return false;
+  // Bengali-only mode: relaxed threshold
+  if (langFilter === "bengali") {
+    if (bengali < 3) return false;                // at least 3 Bengali chars
+    const allowed = bengali + latin;
+    // Bengali must be at least 20% of the Bengali+Latin total
+    return bengali / allowed >= 0.2;
+  }
 
-  // Reject if disallowed scripts exceed 15% of the text
+  // Both mode
+  const allowed = bengali + latin;
+  if (allowed === 0) return false;
   const total = allowed + disallowed;
   return disallowed / total <= 0.15;
 }
 
 // --- Main component ---
 
-export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
+export function NoteList({
+  refreshTrigger,
+  newNotes,
+  feedMode,
+  following,
+  langFilter = "both",
+}) {
   const [notes, setNotes] = useState([]);
+  const [myNotes, setMyNotes] = useState([]);      // user's own posts, unfiltered
   const [loading, setLoading] = useState(true);
   const { ensureProfiles } = useProfile();
+  const { account } = useAccount();
 
   const loadNotes = async () => {
     setLoading(true);
     const authors = feedMode === "following" ? [...following] : null;
-    const events = await fetchRecentNotes(100, authors);
 
-    const filtered = events.filter((event) => {
+    // Always fetch the user's own recent notes separately,
+    // so they appear regardless of language filter or network volume.
+    const [networkEvents, ownEvents] = await Promise.all([
+      fetchRecentNotes(100, authors),
+      account?.publicKey
+        ? fetchRecentNotes(20, [account.publicKey])
+        : Promise.resolve([]),
+    ]);
+
+    const filtered = networkEvents.filter((event) => {
       const content = (event.content || "").trim();
 
       if (!content) return false;
@@ -98,27 +120,42 @@ export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
       if (content.startsWith("{") && content.endsWith("}")) return false;
       if (content.includes('"type":"presence"')) return false;
 
-      // Script filter: only Bengali + Latin content
-      return isAllowedScript(content);
+      return isAllowedScript(content, langFilter);
     });
 
-    // Take only the 30 most recent after filtering
-    const finalNotes = filtered.slice(0, 30);
+    // In "following" mode, only keep own notes if they're part of the network set
+    // (otherwise "following" feed would always include your own posts even if you
+    // don't follow yourself)
+    const ownFiltered = feedMode === "following" ? [] : ownEvents;
 
-    setNotes(finalNotes);
+    setNotes(filtered.slice(0, 30));
+    setMyNotes(ownFiltered);
     setLoading(false);
-    ensureProfiles(finalNotes.map((e) => e.pubkey));
+
+    const allPubkeys = [
+      ...filtered.slice(0, 30).map((e) => e.pubkey),
+      ...ownFiltered.map((e) => e.pubkey),
+    ];
+    ensureProfiles(allPubkeys);
   };
 
   useEffect(() => {
     loadNotes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshTrigger, feedMode, following]);
+  }, [refreshTrigger, feedMode, following, langFilter, account?.publicKey]);
 
-  const allNotes = [...newNotes, ...notes];
-  const uniqueNotes = allNotes.filter(
-    (note, index, self) => index === self.findIndex((n) => n.id === note.id)
-  );
+  // Merge: optimistic new notes → own notes → network notes
+  // (Dedupe by ID, preserving the order above)
+  const seen = new Set();
+  const merged = [];
+  for (const n of [...newNotes, ...myNotes, ...notes]) {
+    if (!seen.has(n.id)) {
+      seen.add(n.id);
+      merged.push(n);
+    }
+  }
+
+  const uniqueNotes = merged;
 
   if (loading && uniqueNotes.length === 0) {
     return <div className="p-8 text-center text-muted">লোড হচ্ছে...</div>;
@@ -129,6 +166,8 @@ export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
       <div className="p-8 text-center text-muted">
         {feedMode === "following"
           ? "আপনি এখনো কাউকে অনুসরণ করেননি, অথবা অনুসরণ করা কারও পোস্ট নেই।"
+          : langFilter === "bengali"
+          ? "এখনো কোনো বাংলা পোস্ট পাওয়া যায়নি।"
           : "এখনো কোনো বাংলা বা ইংরেজি পোস্ট পাওয়া যায়নি।"}
       </div>
     );
