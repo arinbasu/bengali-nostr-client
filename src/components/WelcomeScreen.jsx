@@ -3,32 +3,30 @@ import { CraneIcon } from "./CraneIcon";
 
 const SLIDES = [
   {
-    icon: "🕊️",
+    icon: <CraneIcon className="w-24 h-24 text-blue-600" />,
     title: "বলাকা",
-    subtitle: "বাংলায় কথা বলার জায়গা",
+    subtitle: "মুক্ত স্বাধীন সমাজ মাধ্যম",
     body: "বলাকা একটি বিকেন্দ্রীভূত সোশ্যাল নেটওয়ার্ক — যেখানে আপনার পোস্ট কোনো কোম্পানির নয়, সরাসরি আপনার। কোনো বিজ্ঞাপন নেই, কোনো অ্যালগরিদম নেই, কোনো হস্তক্ষেপ নেই।",
   },
   {
     icon: "🔑",
     title: "আপনার চাবি, আপনার পরিচয়",
-    subtitle: "কোনো পাসওয়ার্ড নেই, কোনো ইমেইল নেই",
-    body: "যোগ দেওয়ার জন্য আপনার ব্রাউজারে একটি গোপন চাবি তৈরি হবে। এই চাবিই আপনার পরিচয় — এটি কোনো সার্ভারে যায় না, শুধু আপনার কাছে থাকে। এটি সংরক্ষণ করা অত্যন্ত জরুরি।",
+    subtitle: "ইমেল বা পাসওয়ার্ড এর প্রয়োজন নেই",
+    body: "যোগ দেওয়ার জন্য আপনার ব্রাউজারে একটি গোপন চাবি তৈরি হবে। এই চাবিই আপনার পরিচয় — এটি কোন সার্ভারে যায় না, শুধু আপনার কাছে থাকে। এই চাবিটিকে, nsec, একে ভুলে যাবেন না, কারো সঙ্গে শেয়ার করবেন না,  আপনার গোপন   চাবিকাঠি।  অন্য চাবি , npub, সকলের সঙ্গে শেয়ার করতে পারেন ",
   },
+  
   {
     icon: "✍️",
     title: "বাংলায় লিখুন",
     subtitle: "ইংরেজি অক্ষরে টাইপ করলে বাংলায় রূপান্তরিত হবে",
     body: "যেমন “ami banglay likhi” লিখলে হবে “আমি বাংলায় লিখি”। ইংরেজিতে লিখতে চাইলে পোস্ট বাক্সের পাশে অ/A বাটনে ক্লিক করুন।",
   },
-
-    {
+  {
     icon: "🌐",
     title: "কী দেখবেন, আপনি ঠিক করবেন",
     subtitle: "শুধু বাংলা, নাকি সব ভাষা?",
     body: "ফিডের উপরের ডান দিকের কোণে একটি ছোট বোতাম আছে — অ / অ EN। চাপ দিলে শুধু বাংলা পোস্ট দেখতে পাবেন। আবার চাপ দিলে বাংলা ও ইংরেজি দুই ভাষার পোস্ট ফিরে আসবে। আপনার পছন্দ মনে রাখা হবে।",
   },
-
-
 ];
 
 export function WelcomeScreen({ onComplete }) {
@@ -60,13 +58,20 @@ export function WelcomeScreen({ onComplete }) {
           onClick={onComplete}
           className="text-sm text-muted hover:text-text"
         >
-          এড়িয়ে যান
+          বুঝেছি ,  লগিন করব
         </button>
       </div>
 
       {/* Slide content */}
       <div className="flex-1 flex flex-col items-center justify-center px-8 text-center max-w-md mx-auto">
-        <div className="text-6xl mb-6">{slide.icon}</div>
+        {/* Icon — big and centered */}
+        <div className="mb-6 flex items-center justify-center h-24">
+          {typeof slide.icon === "string" ? (
+            <span className="text-6xl">{slide.icon}</span>
+          ) : (
+            slide.icon
+          )}
+        </div>
         <h1 className="text-2xl font-bold text-text mb-2">{slide.title}</h1>
         <p className="text-sm text-muted mb-6">{slide.subtitle}</p>
         <p className="text-base text-text leading-relaxed">{slide.body}</p>
@@ -93,7 +98,7 @@ export function WelcomeScreen({ onComplete }) {
               onClick={handleBack}
               className="px-5 py-3 rounded-full border border-gray-300 text-text font-medium hover:bg-gray-50"
             >
-              পিছনে
+              এর আগে
             </button>
           )}
           <button
