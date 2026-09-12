@@ -49,7 +49,10 @@ function isAllowedScript(text) {
   const latin = countMatches(text, /[a-zA-Z\u00C0-\u024F]/g);
 
   // Disallowed scripts
-  const cjk = countMatches(text, /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g);
+  const cjk = countMatches(
+    text,
+    /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g
+  );
   const hangul = countMatches(text, /[\uAC00-\uD7AF\u1100-\u11FF]/g);
   const cyrillic = countMatches(text, /[\u0400-\u04FF]/g);
   const arabic = countMatches(text, /[\u0600-\u06FF\u0750-\u077F]/g);
@@ -82,7 +85,7 @@ export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
   const loadNotes = async () => {
     setLoading(true);
     const authors = feedMode === "following" ? [...following] : null;
-    const events = await fetchRecentNotes(30, authors);
+    const events = await fetchRecentNotes(100, authors);
 
     const filtered = events.filter((event) => {
       const content = (event.content || "").trim();
@@ -99,14 +102,18 @@ export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
       return isAllowedScript(content);
     });
 
-    setNotes(filtered);
+    // Take only the 30 most recent after filtering
+    const finalNotes = filtered.slice(0, 30);
+
+    setNotes(finalNotes);
     setLoading(false);
-    ensureProfiles(filtered.map((e) => e.pubkey));
+    ensureProfiles(finalNotes.map((e) => e.pubkey));
   };
 
   useEffect(() => {
     loadNotes();
-  }, [refreshTrigger, feedMode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTrigger, feedMode, following]);
 
   const allNotes = [...newNotes, ...notes];
   const uniqueNotes = allNotes.filter(
