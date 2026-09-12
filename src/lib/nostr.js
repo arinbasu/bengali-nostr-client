@@ -20,7 +20,8 @@ const relayPool = new Map();
 
 // In-memory cache for replies — keyed by root note ID
 const repliesCache = new Map();
-
+// In-memory cache for parent events — keyed by event ID
+const parentEventCache = new Map();
 // =========================================================================
 // PERSISTENT CONNECTION HELPERS
 // =========================================================================
@@ -467,4 +468,13 @@ export function buildReplyTree(replies, rootId) {
 
 export function updateRepliesCache(noteId, replies) {
   repliesCache.set(noteId, replies);
+}
+
+export async function fetchParentEvent(eventId, relayHints = [], timeoutMs = 3000) {
+  if (parentEventCache.has(eventId)) {
+    return parentEventCache.get(eventId);
+  }
+  const ev = await fetchEventById(eventId, relayHints, timeoutMs);
+  if (ev) parentEventCache.set(eventId, ev);
+  return ev;
 }

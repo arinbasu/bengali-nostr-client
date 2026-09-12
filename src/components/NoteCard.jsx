@@ -7,6 +7,7 @@ import { NoteContent } from "./NoteContent";
 import { SensitiveContent } from "./SensitiveContent";
 import { isSensitive, getWarningReason } from "../lib/nsfw";
 import { ThreadView } from "./ThreadView";
+import { ReplyContext } from "./ReplyContext";
 
 const TRUNCATE_LENGTH = 400;
 
@@ -152,6 +153,8 @@ export function NoteCard({ event }) {
             <span>·</span>
             <span>{timeAgo(event.created_at)}</span>
           </div>
+
+          <ReplyContext event={event} />
 
           {sensitive && !textRevealed ? (
             <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
