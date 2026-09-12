@@ -478,3 +478,48 @@ export async function fetchParentEvent(eventId, relayHints = [], timeoutMs = 300
   if (ev) parentEventCache.set(eventId, ev);
   return ev;
 }
+
+// Search for notes with a specific hashtag using NIP-12 `t` tag filtering.
+export async function searchByHashtag(tag, limit = 50, timeoutMs = 4000) {
+  const cleanTag = tag.toLowerCase().replace(/^#/, "");
+
+  const filter = { kinds: [1], "#t": [cleanTag] };
+
+  const results = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  );
+
+  const merged = new Map();
+  for (const relayEvents of results) {
+    for (const ev of relayEvents) {
+      if (!merged.has(ev.id)) merged.set(ev.id, ev);
+    }
+  }
+
+  const all = Array.from(merged.values());
+  all.sort((a, b) => b.created_at - a.created_at);
+  return all.slice(0, limit);
+}
+
+// Publish or update the user's profile metadata (kind 0).
+// Kind 0 is replaceable — publishing a new one supersedes the old.
+export async function publishProfile(metadata, secretKey) {
+  const event = finalizeEvent(
+    {
+      kind: 0,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [],
+      content: JSON.stringify(metadata),
+    },
+    secretKey
+  );
+
+  try {
+    const results = await Promise.allSettled(pool.publish(DEFAULT_RELAYS, event));
+    console.log("Profile publish results:", results);
+    return event;
+  } catch (err) {
+    console.error("Profile publish error:", err);
+    throw err;
+  }
+}

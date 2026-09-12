@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { nip19 } from "nostr-tools";
-import { fetchRecentNotes } from "../lib/nostr";
+import { fetchRecentNotes, searchByHashtag } from "../lib/nostr";
 import { NoteCard } from "./NoteCard";
 import { useProfile, getDisplayName } from "../contexts/useProfile";
+import { useAccount } from "../contexts/useAccount";
 
 export function SearchView() {
   const { profiles, ensureProfiles } = useProfile();
+  const { account } = useAccount();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState("idle");
+  const [mode, setMode] = useState("idle"); // idle | profile | hashtag | keyword
   const [results, setResults] = useState([]);
   const [foundPubkey, setFoundPubkey] = useState(null);
   const [error, setError] = useState("");
@@ -24,7 +26,7 @@ export function SearchView() {
     setFoundPubkey(null);
 
     try {
-      // Case 1: npub — show that user's profile and notes
+      // --- Case 1: npub — show that user's profile and notes ---
       if (q.startsWith("npub1")) {
         const decoded = nip19.decode(q);
         if (decoded.type !== "npub") throw new Error("Not an npub");
@@ -40,46 +42,77 @@ export function SearchView() {
         return;
       }
 
-      // Case 2: Hashtag search (#tag or plain word)
-      // Strip the leading "#" if present
-      const isHashtag = q.startsWith("#");
-      const tag = isHashtag ? q.slice(1).toLowerCase() : null;
-      const keyword = q.toLowerCase();
+      // --- Case 2: Hashtag (#tag) — direct t-tag search on relays ---
+      if (q.startsWith("#")) {
+        const tag = q.slice(1).toLowerCase();
 
-      // Fetch a bigger pool so we can filter meaningfully
-      const notes = await fetchRecentNotes(300);
+        // Fetch by t tag AND fetch own recent notes
+        // (own notes may lack proper t tags if they were posted before
+        // hashtag extraction was added to the composer)
+        const [tagged, ownNotes] = await Promise.all([
+          searchByHashtag(tag),
+          account?.publicKey
+            ? fetchRecentNotes(50, [account.publicKey])
+            : Promise.resolve([]),
+        ]);
 
-      let filtered;
-
-      if (isHashtag) {
-        // Match either:
-        //  - a `t` tag equal to the tag (case-insensitive)
-        //  - the literal "#tag" in the content
-        filtered = notes.filter((n) => {
+        // Fall back to content matching for own notes without t tags
+        const ownMatches = ownNotes.filter((n) => {
+          const content = (n.content || "").toLowerCase();
+          if (content.includes(`#${tag}`)) return true;
           const tTags = n.tags
             .filter((t) => t[0] === "t")
             .map((t) => (t[1] || "").toLowerCase());
-
-          if (tTags.includes(tag)) return true;
-
-          const content = (n.content || "").toLowerCase();
-          return content.includes(`#${tag}`);
+          return tTags.includes(tag);
         });
-      } else {
-        // Plain keyword: match content OR hashtag tags
-        filtered = notes.filter((n) => {
-          const content = (n.content || "").toLowerCase();
-          if (content.includes(keyword)) return true;
 
-          const tTags = n.tags
-            .filter((t) => t[0] === "t")
-            .map((t) => (t[1] || "").toLowerCase());
-          return tTags.some((t) => t.includes(keyword));
-        });
+        // Merge and dedupe (own matches first)
+        const seen = new Set();
+        const merged = [];
+        for (const n of [...ownMatches, ...tagged]) {
+          if (!seen.has(n.id)) {
+            seen.add(n.id);
+            merged.push(n);
+          }
+        }
+        merged.sort((a, b) => b.created_at - a.created_at);
+
+        setResults(merged);
+        setMode("hashtag");
+        setLoading(false);
+        ensureProfiles(merged.map((n) => n.pubkey));
+        return;
       }
 
+      // --- Case 3: Plain keyword — content + t-tag filter ---
+      const [networkNotes, ownNotes] = await Promise.all([
+        fetchRecentNotes(300),
+        account?.publicKey
+          ? fetchRecentNotes(50, [account.publicKey])
+          : Promise.resolve([]),
+      ]);
+
+      const seen = new Set();
+      const allNotes = [];
+      for (const n of [...ownNotes, ...networkNotes]) {
+        if (!seen.has(n.id)) {
+          seen.add(n.id);
+          allNotes.push(n);
+        }
+      }
+
+      const keyword = q.toLowerCase();
+      const filtered = allNotes.filter((n) => {
+        const content = (n.content || "").toLowerCase();
+        if (content.includes(keyword)) return true;
+        const tTags = n.tags
+          .filter((t) => t[0] === "t")
+          .map((t) => (t[1] || "").toLowerCase());
+        return tTags.some((t) => t.includes(keyword));
+      });
+
       setResults(filtered);
-      setMode(isHashtag ? "hashtag" : "keyword");
+      setMode("keyword");
       setLoading(false);
       ensureProfiles(filtered.map((n) => n.pubkey));
     } catch (err) {
@@ -185,7 +218,7 @@ export function SearchView() {
 
       {!loading && mode !== "idle" && results.length === 0 && !error && (
         <div className="p-8 text-center text-gray-400 text-sm">
-          কোনো ফলাফল পাওয়া গেল না ।
+          কোনো ফলাফল পাওয়া যায়নি।
         </div>
       )}
 

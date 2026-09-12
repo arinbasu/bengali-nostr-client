@@ -39,11 +39,9 @@ function extractHashtags(event) {
   const tags = new Set();
   const content = event.content || "";
 
-  // From content: #word — allow Bengali and Latin letters
   const contentTags = content.match(/#[\u0980-\u09FF\w]+/g) || [];
   contentTags.forEach((t) => tags.add(t.slice(1).toLowerCase()));
 
-  // From event tags
   event.tags
     .filter((t) => t[0] === "t" && t[1])
     .forEach((t) => tags.add(t[1].toLowerCase()));
@@ -67,28 +65,11 @@ export function ExploreView() {
     (async () => {
       setLoading(true);
 
-      // Fetch recent network notes AND the user's own notes separately,
-      // so your Bengali posts always appear even if they've aged out of the sample.
-      const [networkNotes, myNotes] = await Promise.all([
-        fetchRecentNotes(200),
-        account?.publicKey
-          ? fetchRecentNotes(20, [account.publicKey])
-          : Promise.resolve([]),
-      ]);
+      const events = await fetchRecentNotes(200);
 
       if (cancelled) return;
 
-      // Merge and dedupe (own notes first, so they win)
-      const seen = new Set();
-      const events = [];
-      for (const e of [...myNotes, ...networkNotes]) {
-        if (!seen.has(e.id)) {
-          seen.add(e.id);
-          events.push(e);
-        }
-      }
-
-      // Filter out junk notes
+      // Filter out junk notes early so they don't pollute trending
       const clean = events.filter((e) => {
         const c = (e.content || "").trim();
         if (!c || c.length < 8) return false;
@@ -111,6 +92,7 @@ export function ExploreView() {
         .slice(0, 10);
 
       // --- Suggested accounts ---
+      // Group notes by author and count Bengali notes
       const authorStats = new Map();
       clean.forEach((e) => {
         const prev = authorStats.get(e.pubkey) || {
@@ -128,7 +110,7 @@ export function ExploreView() {
         .filter(([pubkey, stats]) => {
           if (stats.bengali === 0) return false;
           if (following?.has(pubkey)) return false;
-          if (pubkey === account?.publicKey) return false;
+          if (pubkey === account?.publicKey) return false;   // exclude self
           return true;
         })
         .sort((a, b) => {
@@ -140,9 +122,13 @@ export function ExploreView() {
 
       ensureProfiles(suggestions);
 
-      // --- Recent Bengali posts (including your own) ---
+      // --- Recent Bengali posts (excluding your own) ---
       const popular = clean
-        .filter((e) => hasBengali(e.content || ""))
+        .filter((e) => {
+          if (!hasBengali(e.content || "")) return false;
+          if (account?.publicKey && e.pubkey === account.publicKey) return false;
+          return true;
+        })
         .sort((a, b) => b.created_at - a.created_at)
         .slice(0, 5);
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "./components/Header";
 import { BottomNav } from "./components/BottomNav";
 import { NoteComposer } from "./components/NoteComposer";
@@ -9,6 +9,7 @@ import { NotificationsView } from "./components/NotificationsView";
 import { SearchView } from "./components/SearchView";
 import { ExploreView } from "./components/ExploreView";
 import { WelcomeScreen } from "./components/WelcomeScreen";
+import { ProfileSetupPage } from "./components/ProfileSetupPage";
 import { useAccount } from "./contexts/useAccount";
 
 export default function App() {
@@ -23,6 +24,22 @@ export default function App() {
   const [langFilter, setLangFilter] = useState(
     () => localStorage.getItem("balaka_lang_filter") || "both"
   );
+  const [showProfileSetup, setShowProfileSetup] = useState(false);
+
+  // Show profile setup page for brand new accounts
+  useEffect(() => {
+    if (
+      account &&
+      localStorage.getItem("balaka_needs_profile_setup") === "true"
+    ) {
+      setShowProfileSetup(true);
+    }
+  }, [account]);
+
+  const handleProfileSetupComplete = () => {
+    localStorage.removeItem("balaka_needs_profile_setup");
+    setShowProfileSetup(false);
+  };
 
   const handlePublished = (newEvent) => {
     setNewNotes((prev) => [newEvent, ...prev]);
@@ -56,6 +73,10 @@ export default function App() {
 
   if (!account) return <LoginScreen />;
 
+  if (showProfileSetup) {
+    return <ProfileSetupPage onComplete={handleProfileSetupComplete} />;
+  }
+
   return (
     <div className="min-h-screen bg-bg">
       <Header />
@@ -84,13 +105,12 @@ export default function App() {
                 অনুসরণ
               </button>
 
-              {/* Language filter toggle — right aligned */}
               <button
                 onClick={toggleLangFilter}
                 title={
                   langFilter === "bengali"
-                    ? "এখন শুধুই বাংলা দেখছেন, সিলেক্ট করে সব ভাষা দেখুন"
-                    : "এখন বাংলা ও ইংরেজি পোস্ট দেখছেন, সিলেক্ট করে শুধু বাংলা দেখুন"
+                    ? "এই মুহূর্তে: শুধু বাংলা পোস্ট। সব ভাষা দেখতে চাপ দিন।"
+                    : "এই মুহূর্তে: বাংলা ও ইংরেজি পোস্ট। শুধু বাংলা দেখতে চাপ দিন।"
                 }
                 className={`ml-auto mr-3 text-xs px-2 py-1 rounded-full border transition ${
                   langFilter === "bengali"

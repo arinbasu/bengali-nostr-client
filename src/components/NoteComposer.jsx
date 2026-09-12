@@ -6,6 +6,12 @@ import { useAccount } from "../contexts/useAccount";
 
 const MAX_LENGTH = 5000;
 
+// Extract hashtags from content: #bengali, #বাংলা, etc.
+function extractHashtags(text) {
+  const matches = text.match(/#[\u0980-\u09FF\w]+/g) || [];
+  return [...new Set(matches.map((t) => t.slice(1).toLowerCase()))];
+}
+
 export function NoteComposer({ onPublished }) {
   const [content, setContent] = useState("");
   const [file, setFile] = useState(null);
@@ -32,8 +38,14 @@ export function NoteComposer({ onPublished }) {
     try {
       setStatus("uploading");
       let tags = [];
+
+      // Extract hashtags from content and add as NIP-12 `t` tags
+      const hashtags = extractHashtags(content);
+      hashtags.forEach((tag) => tags.push(["t", tag]));
+
+      // Attach image if present
       if (file) {
-        const { url, mime } = await uploadImage(file);
+        const { url, mime } = await uploadImage(file, account.secretKey);
         tags.push(["imeta", `url ${url}`, `m ${mime}`]);
       }
 
@@ -60,7 +72,6 @@ export function NoteComposer({ onPublished }) {
 
   return (
     <div className="bg-white p-4 border-b border-gray-200">
-      {/* relative + z-50 ensures the suggestion dropdown isn't clipped by the feed below */}
       <div className="relative z-50">
         {bengaliOn ? (
           <Akshar
