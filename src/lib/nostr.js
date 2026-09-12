@@ -161,29 +161,42 @@ export async function fetchContactList(pubkey, timeoutMs = 4000) {
     .map((t) => t[1]);
 }
 
-export async function fetchProfiles(pubkeys, timeoutMs = 3000) {
+export async function fetchProfiles(pubkeys, timeoutMs = 8000) {
   if (!pubkeys || pubkeys.length === 0) return new Map();
 
-  const filter = { kinds: [0], authors: pubkeys };
-  const results = await Promise.all(
-    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  const profileMap = new Map();
+
+  // Chunk pubkeys into groups of 10 — prevents one slow relay
+  // from timing out the entire batch
+  const chunks = [];
+  for (let i = 0; i < pubkeys.length; i += 10) {
+    chunks.push(pubkeys.slice(i, i + 10));
+  }
+
+  const chunkResults = await Promise.all(
+    chunks.map(async (chunk) => {
+      const filter = { kinds: [0], authors: chunk };
+      const results = await Promise.all(
+        DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+      );
+      return results.flat();
+    })
   );
 
-  const profileMap = new Map();
-  const all = results.flat();
-
+  const all = chunkResults.flat();
   all.sort((a, b) => b.created_at - a.created_at);
+
   for (const ev of all) {
     if (!profileMap.has(ev.pubkey)) {
       try {
-        const metadata = JSON.parse(ev.content);
-        profileMap.set(ev.pubkey, metadata);
+        profileMap.set(ev.pubkey, JSON.parse(ev.content));
       } catch {}
     }
   }
 
   return profileMap;
 }
+
 
 export async function fetchEventById(eventId, relayHints = [], timeoutMs = 4000) {
   if (!eventId) return null;
