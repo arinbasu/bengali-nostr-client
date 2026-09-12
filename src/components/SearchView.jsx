@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { nip19 } from "nostr-tools";
-import { fetchRecentNotes, searchByHashtag } from "../lib/nostr";
+import { Akshar } from "akshar-typing";
+import {
+  fetchRecentNotes,
+  searchByHashtag,
+  searchNotes,
+} from "../lib/nostr";
 import { NoteCard } from "./NoteCard";
 import { useProfile, getDisplayName } from "../contexts/useProfile";
 import { useAccount } from "../contexts/useAccount";
@@ -9,6 +14,7 @@ export function SearchView() {
   const { profiles, ensureProfiles } = useProfile();
   const { account } = useAccount();
   const [query, setQuery] = useState("");
+  const [bengaliOn, setBengaliOn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("idle"); // idle | profile | hashtag | keyword
   const [results, setResults] = useState([]);
@@ -26,7 +32,9 @@ export function SearchView() {
     setFoundPubkey(null);
 
     try {
-      // --- Case 1: npub — show that user's profile and notes ---
+      // -----------------------------------------------------------------
+      // Case 1: npub — show that user's profile and notes
+      // -----------------------------------------------------------------
       if (q.startsWith("npub1")) {
         const decoded = nip19.decode(q);
         if (decoded.type !== "npub") throw new Error("Not an npub");
@@ -42,13 +50,12 @@ export function SearchView() {
         return;
       }
 
-      // --- Case 2: Hashtag (#tag) — direct t-tag search on relays ---
+      // -----------------------------------------------------------------
+      // Case 2: Hashtag (#tag) — direct t-tag search on relays
+      // -----------------------------------------------------------------
       if (q.startsWith("#")) {
         const tag = q.slice(1).toLowerCase();
 
-        // Fetch by t tag AND fetch own recent notes
-        // (own notes may lack proper t tags if they were posted before
-        // hashtag extraction was added to the composer)
         const [tagged, ownNotes] = await Promise.all([
           searchByHashtag(tag),
           account?.publicKey
@@ -66,7 +73,6 @@ export function SearchView() {
           return tTags.includes(tag);
         });
 
-        // Merge and dedupe (own matches first)
         const seen = new Set();
         const merged = [];
         for (const n of [...ownMatches, ...tagged]) {
@@ -84,37 +90,36 @@ export function SearchView() {
         return;
       }
 
-      // --- Case 3: Plain keyword — content + t-tag filter ---
-      const [networkNotes, ownNotes] = await Promise.all([
-        fetchRecentNotes(300),
+      // -----------------------------------------------------------------
+      // Case 3: Keyword — NIP-50 full-text search + own notes fallback
+      // -----------------------------------------------------------------
+      const [searchResults, ownNotes] = await Promise.all([
+        searchNotes(q, 50),
         account?.publicKey
           ? fetchRecentNotes(50, [account.publicKey])
           : Promise.resolve([]),
       ]);
 
+      // Filter own notes for the keyword too — relays may not have
+      // indexed them yet, or may not have them in the NIP-50 index
+      const ownMatches = ownNotes.filter((n) =>
+        (n.content || "").toLowerCase().includes(q.toLowerCase())
+      );
+
       const seen = new Set();
-      const allNotes = [];
-      for (const n of [...ownNotes, ...networkNotes]) {
+      const merged = [];
+      for (const n of [...ownMatches, ...searchResults]) {
         if (!seen.has(n.id)) {
           seen.add(n.id);
-          allNotes.push(n);
+          merged.push(n);
         }
       }
+      merged.sort((a, b) => b.created_at - a.created_at);
 
-      const keyword = q.toLowerCase();
-      const filtered = allNotes.filter((n) => {
-        const content = (n.content || "").toLowerCase();
-        if (content.includes(keyword)) return true;
-        const tTags = n.tags
-          .filter((t) => t[0] === "t")
-          .map((t) => (t[1] || "").toLowerCase());
-        return tTags.some((t) => t.includes(keyword));
-      });
-
-      setResults(filtered);
+      setResults(merged);
       setMode("keyword");
       setLoading(false);
-      ensureProfiles(filtered.map((n) => n.pubkey));
+      ensureProfiles(merged.map((n) => n.pubkey));
     } catch (err) {
       console.error(err);
       setError("অনুসন্ধান ব্যর্থ হয়েছে। npub বা শব্দ দিয়ে আবার চেষ্টা করুন।");
@@ -127,38 +132,81 @@ export function SearchView() {
     ? getDisplayName(foundProfile, foundPubkey.slice(0, 12) + "...")
     : "";
 
-  // Suggested hashtags for quick access
   const SUGGESTED_TAGS = ["বাংলা", "bengali", "bangla", "kolkata", "bangladesh"];
 
   const handleTagClick = (tag) => {
     setQuery(`#${tag}`);
-    // Submit on next tick so the input value is reflected
     setTimeout(() => {
       document.getElementById("search-form")?.requestSubmit();
     }, 0);
   };
+
+  const inputClassName =
+    "flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
 
   return (
     <div>
       <form
         id="search-form"
         onSubmit={handleSearch}
-        className="p-4 border-b border-gray-200 flex gap-2"
+        className="p-4 border-b border-gray-200"
       >
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="npub1..., #হ্যাশট্যাগ বা শব্দ"
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? "..." : "খুঁজুন"}
-        </button>
+        <div className="flex gap-2">
+          <div className="flex-1 relative z-50">
+            {bengaliOn ? (
+              <Akshar
+                lang="bn"
+                value={query}
+                onChangeText={setQuery}
+                maxOptions={5}
+                containerClassName="relative z-50"
+                renderComponent={(props) => (
+                  <input
+                    {...props}
+                    type="text"
+                    placeholder="npub1..., #হ্যাশট্যাগ বা শব্দ"
+                    className={inputClassName}
+                  />
+                )}
+              />
+            ) : (
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="npub1..., #hashtag or keyword"
+                className={inputClassName}
+              />
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? "..." : "খুঁজুন"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setBengaliOn((v) => !v)}
+            title={bengaliOn ? "Search in English" : "বাংলায় খুঁজুন"}
+            className={`px-3 py-2 rounded-lg text-sm font-medium border transition ${
+              bengaliOn
+                ? "border-blue-500 text-blue-600 bg-blue-50"
+                : "border-gray-300 text-gray-500 bg-white"
+            }`}
+          >
+            {bengaliOn ? "অ" : "A"}
+          </button>
+        </div>
+
+        {bengaliOn && (
+          <p className="text-xs text-gray-400 mt-2">
+            ইংরেজি অক্ষরে টাইপ করুন — বাংলায় রূপান্তরিত হবে
+          </p>
+        )}
       </form>
 
       {mode === "idle" && (

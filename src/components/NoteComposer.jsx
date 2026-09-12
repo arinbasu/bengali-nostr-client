@@ -39,11 +39,11 @@ export function NoteComposer({ onPublished }) {
       setStatus("uploading");
       let tags = [];
 
-      // Extract hashtags from content and add as NIP-12 `t` tags
+      // Extract hashtags and add as NIP-12 `t` tags
       const hashtags = extractHashtags(content);
       hashtags.forEach((tag) => tags.push(["t", tag]));
 
-      // Attach image if present
+      // Upload image if present
       if (file) {
         const { url, mime } = await uploadImage(file, account.secretKey);
         tags.push(["imeta", `url ${url}`, `m ${mime}`]);
@@ -81,6 +81,7 @@ export function NoteComposer({ onPublished }) {
               if (text.length <= MAX_LENGTH) setContent(text);
             }}
             maxOptions={5}
+            offsetY={-4}
             containerClassName="relative z-50"
             renderComponent={(props) => (
               <textarea
@@ -134,6 +135,7 @@ export function NoteComposer({ onPublished }) {
             <span className="text-2xl">📷</span>
           </label>
 
+          {/* ← THE TOGGLE */}
           <button
             onClick={() => setBengaliOn((v) => !v)}
             className={`text-xs px-2 py-1 rounded-full border transition ${

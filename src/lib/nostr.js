@@ -10,18 +10,25 @@ export const DEFAULT_RELAYS = [
   "wss://nostr.mom",
 ];
 
+// Relays that support NIP-50 full-text search
+export const SEARCH_RELAYS = [
+  "wss://relay.nostr.band",
+  "wss://search.nos.today",
+  "wss://nostr.wine",
+];
+
 const STORAGE_KEY = "balaka_nsec";
 
-// SimplePool for publishing (writes work fine through it)
+// SimplePool for publishing
 const pool = new SimplePool();
 
 // Persistent relay connections — one per URL, reused for all fetches
 const relayPool = new Map();
 
-// In-memory cache for replies — keyed by root note ID
+// Caches
 const repliesCache = new Map();
-// In-memory cache for parent events — keyed by event ID
 const parentEventCache = new Map();
+
 // =========================================================================
 // PERSISTENT CONNECTION HELPERS
 // =========================================================================
@@ -38,7 +45,6 @@ async function getRelay(url) {
   const relay = await Relay.connect(url);
   relayPool.set(url, relay);
 
-  // Auto-remove from pool when the relay closes
   relay.onclose = () => {
     if (relayPool.get(url) === relay) {
       relayPool.delete(url);
@@ -48,8 +54,6 @@ async function getRelay(url) {
   return relay;
 }
 
-// Fetch from a single relay using a pooled connection.
-// Does NOT close the connection afterward.
 function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
   return new Promise(async (resolve) => {
     const events = [];
@@ -89,7 +93,7 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
 }
 
 // =========================================================================
-// LEGACY KEY HANDLING (kept for backward compatibility)
+// LEGACY KEY HANDLING
 // =========================================================================
 
 export function getOrCreateKeypair() {
@@ -174,9 +178,7 @@ export async function fetchProfiles(pubkeys, timeoutMs = 3000) {
       try {
         const metadata = JSON.parse(ev.content);
         profileMap.set(ev.pubkey, metadata);
-      } catch {
-        // skip malformed metadata
-      }
+      } catch {}
     }
   }
 
@@ -196,6 +198,15 @@ export async function fetchEventById(eventId, relayHints = [], timeoutMs = 4000)
   return flat[0] || null;
 }
 
+export async function fetchParentEvent(eventId, relayHints = [], timeoutMs = 3000) {
+  if (parentEventCache.has(eventId)) {
+    return parentEventCache.get(eventId);
+  }
+  const ev = await fetchEventById(eventId, relayHints, timeoutMs);
+  if (ev) parentEventCache.set(eventId, ev);
+  return ev;
+}
+
 export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 4000) {
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
 
@@ -207,6 +218,49 @@ export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 4000) {
 
   const results = await Promise.all(
     DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  );
+
+  const merged = new Map();
+  for (const relayEvents of results) {
+    for (const ev of relayEvents) {
+      if (!merged.has(ev.id)) merged.set(ev.id, ev);
+    }
+  }
+
+  const all = Array.from(merged.values());
+  all.sort((a, b) => b.created_at - a.created_at);
+  return all.slice(0, limit);
+}
+
+// Search notes with a specific hashtag using NIP-12 `t` tag filtering
+export async function searchByHashtag(tag, limit = 50, timeoutMs = 4000) {
+  const cleanTag = tag.toLowerCase().replace(/^#/, "");
+  const filter = { kinds: [1], "#t": [cleanTag] };
+
+  const results = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  );
+
+  const merged = new Map();
+  for (const relayEvents of results) {
+    for (const ev of relayEvents) {
+      if (!merged.has(ev.id)) merged.set(ev.id, ev);
+    }
+  }
+
+  const all = Array.from(merged.values());
+  all.sort((a, b) => b.created_at - a.created_at);
+  return all.slice(0, limit);
+}
+
+// Full-text keyword search via NIP-50 compatible relays
+export async function searchNotes(keyword, limit = 50, timeoutMs = 4000) {
+  if (!keyword || !keyword.trim()) return [];
+
+  const filter = { kinds: [1], search: keyword.trim() };
+
+  const results = await Promise.all(
+    SEARCH_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
   );
 
   const merged = new Map();
@@ -318,6 +372,74 @@ export async function publishContactList(followedPubkeys, secretKey) {
   }
 }
 
+export async function publishProfile(metadata, secretKey) {
+  const event = finalizeEvent(
+    {
+      kind: 0,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [],
+      content: JSON.stringify(metadata),
+    },
+    secretKey
+  );
+
+  try {
+    const results = await Promise.allSettled(pool.publish(DEFAULT_RELAYS, event));
+    console.log("Profile publish results:", results);
+    return event;
+  } catch (err) {
+    console.error("Profile publish error:", err);
+    throw err;
+  }
+}
+
+export async function publishDeletionRequest(eventIds, secretKey) {
+  const tags = eventIds.map((id) => ["e", id]);
+  tags.push(["k", "1"]);
+
+  const event = finalizeEvent(
+    {
+      kind: 5,
+      created_at: Math.floor(Date.now() / 1000),
+      tags,
+      content: "Deleted by author",
+    },
+    secretKey
+  );
+
+  try {
+    const results = await Promise.allSettled(pool.publish(DEFAULT_RELAYS, event));
+    console.log("Deletion publish results:", results);
+    return event;
+  } catch (err) {
+    console.error("Deletion publish error:", err);
+    throw err;
+  }
+}
+
+export async function fetchDeletions(pubkeys, timeoutMs = 3000) {
+  if (!pubkeys || pubkeys.length === 0) return new Set();
+
+  const filter = { kinds: [5], authors: pubkeys };
+
+  const results = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  );
+
+  const deletedIds = new Set();
+  for (const relayEvents of results) {
+    for (const ev of relayEvents) {
+      ev.tags
+        .filter((t) => t[0] === "e")
+        .forEach((t) => {
+          if (t[1]) deletedIds.add(t[1]);
+        });
+    }
+  }
+
+  return deletedIds;
+}
+
 // =========================================================================
 // REPLIES (NIP-10)
 // =========================================================================
@@ -330,20 +452,15 @@ export function buildReplyTags(parentEvent) {
   const rootMarker = eTags.find((t) => t[3] === "root");
 
   if (rootMarker) {
-    // Parent already references a root — inherit it,
-    // and set our parent to the event we're replying to.
     rootId = rootMarker[1];
     parentId = parentEvent.id;
   } else if (eTags.length === 0) {
-    // Parent is the thread root
     rootId = parentEvent.id;
     parentId = parentEvent.id;
   } else if (eTags.length === 1) {
-    // Single unmarked e tag — legacy, treat as direct reply to root
     rootId = eTags[0][1];
     parentId = rootId;
   } else {
-    // Multiple unmarked — NIP-10 positional: first is root, last is parent
     rootId = eTags[0][1];
     parentId = eTags[eTags.length - 1][1];
   }
@@ -417,7 +534,6 @@ export async function fetchReplies(noteId, timeoutMs = 4000) {
   all.sort((a, b) => a.created_at - b.created_at);
   console.log("📊 Total replies:", all.length);
 
-  // Only cache non-empty results
   if (all.length > 0) {
     repliesCache.set(noteId, all);
   }
@@ -430,6 +546,12 @@ export function clearRepliesCache(noteId) {
     repliesCache.delete(noteId);
   } else {
     repliesCache.clear();
+  }
+}
+
+export function updateRepliesCache(noteId, replies) {
+  if (noteId) {
+    repliesCache.set(noteId, replies);
   }
 }
 
@@ -449,7 +571,6 @@ export function buildReplyTree(replies, rootId) {
     } else if (eTags.length <= 1) {
       parentId = rootId;
     } else {
-      // Unmarked NIP-10 positional: last e tag is the parent
       parentId = eTags[eTags.length - 1][1];
     }
 
@@ -459,67 +580,9 @@ export function buildReplyTree(replies, rootId) {
     } else {
       const parent = byId.get(parentId);
       if (parent) parent.children.push(node);
-      else roots.push(node); // orphan — show at top level
+      else roots.push(node);
     }
   });
 
   return roots;
-}
-
-export function updateRepliesCache(noteId, replies) {
-  repliesCache.set(noteId, replies);
-}
-
-export async function fetchParentEvent(eventId, relayHints = [], timeoutMs = 3000) {
-  if (parentEventCache.has(eventId)) {
-    return parentEventCache.get(eventId);
-  }
-  const ev = await fetchEventById(eventId, relayHints, timeoutMs);
-  if (ev) parentEventCache.set(eventId, ev);
-  return ev;
-}
-
-// Search for notes with a specific hashtag using NIP-12 `t` tag filtering.
-export async function searchByHashtag(tag, limit = 50, timeoutMs = 4000) {
-  const cleanTag = tag.toLowerCase().replace(/^#/, "");
-
-  const filter = { kinds: [1], "#t": [cleanTag] };
-
-  const results = await Promise.all(
-    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
-  );
-
-  const merged = new Map();
-  for (const relayEvents of results) {
-    for (const ev of relayEvents) {
-      if (!merged.has(ev.id)) merged.set(ev.id, ev);
-    }
-  }
-
-  const all = Array.from(merged.values());
-  all.sort((a, b) => b.created_at - a.created_at);
-  return all.slice(0, limit);
-}
-
-// Publish or update the user's profile metadata (kind 0).
-// Kind 0 is replaceable — publishing a new one supersedes the old.
-export async function publishProfile(metadata, secretKey) {
-  const event = finalizeEvent(
-    {
-      kind: 0,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [],
-      content: JSON.stringify(metadata),
-    },
-    secretKey
-  );
-
-  try {
-    const results = await Promise.allSettled(pool.publish(DEFAULT_RELAYS, event));
-    console.log("Profile publish results:", results);
-    return event;
-  } catch (err) {
-    console.error("Profile publish error:", err);
-    throw err;
-  }
 }
