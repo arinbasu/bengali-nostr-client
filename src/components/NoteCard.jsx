@@ -1,13 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { nip19 } from "nostr-tools";
-import { publishReaction, publishRepost } from "../lib/nostr";
+import { publishReaction, publishRepost, fetchReplies } from "../lib/nostr";
 import { useAccount } from "../contexts/useAccount";
 import { useProfile, getDisplayName } from "../contexts/useProfile";
 import { NoteContent } from "./NoteContent";
 import { SensitiveContent } from "./SensitiveContent";
-import { isSensitive, getWarningReason } from "../lib/nsfw";
 import { ThreadView } from "./ThreadView";
 import { ReplyContext } from "./ReplyContext";
+import { isSensitive, getWarningReason } from "../lib/nsfw";
 
 const TRUNCATE_LENGTH = 400;
 
@@ -45,12 +45,20 @@ function extractImetaUrls(tag) {
 }
 
 export function NoteCard({ event }) {
-  const [likes, setLikes] = useState(0);
-  const [hasLiked, setHasLiked] = useState(false);
+  // --- Heart (like) state ---
+  const [heartCount, setHeartCount] = useState(0);
+  const [hasHeart, setHasHeart] = useState(false);
+
+  // --- Thumbs up state ---
+  const [thumbCount, setThumbCount] = useState(0);
+  const [hasThumb, setHasThumb] = useState(false);
+
   const [hasReposted, setHasReposted] = useState(false);
   const [textRevealed, setTextRevealed] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [showThread, setShowThread] = useState(false);      // ← ADDED
+  const [showThread, setShowThread] = useState(false);
+  const [replyCount, setReplyCount] = useState(null);
+
   const { account, following, follow, unfollow } = useAccount();
   const { profiles } = useProfile();
 
@@ -81,21 +89,55 @@ export function NoteCard({ event }) {
       ? truncateContent(event.content, TRUNCATE_LENGTH)
       : event.content;
 
+  // Lazily fetch reply count
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      fetchReplies(event.id).then((replies) => {
+        if (!cancelled) setReplyCount(replies.length);
+      });
+    }, 800);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [event.id]);
+
   const handleFollowToggle = () => {
     if (isFollowing) unfollow(event.pubkey);
     else follow(event.pubkey);
   };
 
-  const handleLike = async () => {
-    if (hasLiked || !account?.secretKey) return;
-    setHasLiked(true);
-    setLikes((prev) => prev + 1);
+  // Generic reaction handler
+  const handleReaction = async (type) => {
+    if (!account?.secretKey) return;
+
+    const isHeart = type === "heart";
+    const alreadyReacted = isHeart ? hasHeart : hasThumb;
+    if (alreadyReacted) return;
+
+    // Optimistic update
+    if (isHeart) {
+      setHasHeart(true);
+      setHeartCount((prev) => prev + 1);
+    } else {
+      setHasThumb(true);
+      setThumbCount((prev) => prev + 1);
+    }
+
     try {
-      await publishReaction(event.id, event.pubkey, account.secretKey);
+      const content = isHeart ? "+" : "👍";
+      await publishReaction(event.id, event.pubkey, account.secretKey, content);
     } catch (err) {
-      console.error("Failed to publish like", err);
-      setHasLiked(false);
-      setLikes((prev) => prev - 1);
+      console.error(`Failed to publish ${type} reaction`, err);
+      // Rollback
+      if (isHeart) {
+        setHasHeart(false);
+        setHeartCount((prev) => prev - 1);
+      } else {
+        setHasThumb(false);
+        setThumbCount((prev) => prev - 1);
+      }
     }
   };
 
@@ -203,8 +245,8 @@ export function NoteCard({ event }) {
             </>
           )}
 
-          <div className="flex items-center gap-8 mt-3 text-gray-500">
-            {/* ← CHANGED: reply button now toggles the thread */}
+          {/* Action row */}
+          <div className="flex items-center gap-6 mt-3 text-gray-500">
             <button
               onClick={() => setShowThread((v) => !v)}
               className={`flex items-center gap-1.5 transition ${
@@ -215,14 +257,30 @@ export function NoteCard({ event }) {
               <span className="text-sm">উত্তর</span>
             </button>
 
+            {/* Heart (like) */}
             <button
-              onClick={handleLike}
+              onClick={() => handleReaction("heart")}
               className={`flex items-center gap-1.5 transition ${
-                hasLiked ? "text-red-500" : "hover:text-red-500"
+                hasHeart ? "text-red-500" : "hover:text-red-500"
               }`}
             >
-              <span className="text-lg">{hasLiked ? "❤️" : "🤍"}</span>
-              <span className="text-sm">{likes > 0 ? likes : "লাইক"}</span>
+              <span className="text-lg">{hasHeart ? "❤️" : "🤍"}</span>
+              <span className="text-sm">
+                {heartCount > 0 ? heartCount : "ভাল লাগল"}
+              </span>
+            </button>
+
+            {/* Thumbs up */}
+            <button
+              onClick={() => handleReaction("thumb")}
+              className={`flex items-center gap-1.5 transition ${
+                hasThumb ? "text-blue-600" : "hover:text-blue-600"
+              }`}
+            >
+              <span className="text-lg">{hasThumb ? "👍" : "👍🏻"}</span>
+              <span className="text-sm">
+                {thumbCount > 0 ? thumbCount : "পছন্দ"}
+              </span>
             </button>
 
             <button
@@ -238,7 +296,16 @@ export function NoteCard({ event }) {
             </button>
           </div>
 
-          {/* ← ADDED: thread view */}
+          {/* See all replies */}
+          {replyCount > 0 && !showThread && (
+            <button
+              onClick={() => setShowThread(true)}
+              className="mt-2 text-sm text-blue-600 hover:underline font-medium"
+            >
+              {replyCount} টি উত্তর দেখুন
+            </button>
+          )}
+
           {showThread && <ThreadView rootEvent={event} />}
         </div>
       </div>

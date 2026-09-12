@@ -247,7 +247,7 @@ export async function publishNote(content, secretKey, tags = []) {
   }
 }
 
-export async function publishReaction(noteId, authorPubkey, secretKey) {
+export async function publishReaction(noteId, authorPubkey, secretKey, content = "+") {
   const event = finalizeEvent(
     {
       kind: 7,
@@ -257,7 +257,7 @@ export async function publishReaction(noteId, authorPubkey, secretKey) {
         ["p", authorPubkey],
         ["k", "1"],
       ],
-      content: "+",
+      content,
     },
     secretKey
   );
