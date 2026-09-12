@@ -2,18 +2,15 @@ import { useEffect, useState } from "react";
 import { fetchRecentNotes } from "../lib/nostr";
 import { NoteCard } from "./NoteCard";
 import { useProfile } from "../contexts/useProfile";
-import detectScriptFamily from "hardcoded-language-detector";
 
 // --- Junk detection helpers ---
 
-// Hex dumps: long, no spaces, mostly a-f and 0-9
 function isHexDump(text) {
   if (text.length < 60) return false;
   if (/\s/.test(text)) return false;
   return /^[0-9a-fA-F]+$/.test(text);
 }
 
-// Known spam phrases and domains
 const SPAM_PHRASES = [
   "airdrop",
   "claim your",
@@ -31,15 +28,48 @@ function isSpam(text) {
   return SPAM_PHRASES.some((p) => lower.includes(p));
 }
 
-// Relay protocol noise
 function isRelayNoise(text) {
   return text.startsWith("channel:");
 }
 
-// Too short to be meaningful
 function isTooShort(text) {
   const words = text.trim().split(/\s+/);
   return words.length < 2 && text.length < 15;
+}
+
+// --- Script filtering ---
+
+function countMatches(text, regex) {
+  return (text.match(regex) || []).length;
+}
+
+function isAllowedScript(text) {
+  // Allowed scripts
+  const bengali = countMatches(text, /[\u0980-\u09FF]/g);
+  const latin = countMatches(text, /[a-zA-Z\u00C0-\u024F]/g);
+
+  // Disallowed scripts
+  const cjk = countMatches(text, /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g);
+  const hangul = countMatches(text, /[\uAC00-\uD7AF\u1100-\u11FF]/g);
+  const cyrillic = countMatches(text, /[\u0400-\u04FF]/g);
+  const arabic = countMatches(text, /[\u0600-\u06FF\u0750-\u077F]/g);
+  const devanagari = countMatches(text, /[\u0900-\u097F]/g);
+  const tamil = countMatches(text, /[\u0B80-\u0BFF]/g);
+  const telugu = countMatches(text, /[\u0C00-\u0C7F]/g);
+  const thai = countMatches(text, /[\u0E00-\u0E7F]/g);
+  const hebrew = countMatches(text, /[\u0590-\u05FF]/g);
+  const greek = countMatches(text, /[\u0370-\u03FF]/g);
+
+  const allowed = bengali + latin;
+  const disallowed =
+    cjk + hangul + cyrillic + arabic + devanagari +
+    tamil + telugu + thai + hebrew + greek;
+
+  if (allowed === 0) return false;
+
+  // Reject if disallowed scripts exceed 15% of the text
+  const total = allowed + disallowed;
+  return disallowed / total <= 0.15;
 }
 
 // --- Main component ---
@@ -57,34 +87,20 @@ export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
     const filtered = events.filter((event) => {
       const content = (event.content || "").trim();
 
-      // Empty
       if (!content) return false;
-
-      // Too short
       if (isTooShort(content)) return false;
-
-      // Hex dumps (raw keys, signatures, event IDs)
       if (isHexDump(content)) return false;
-
-      // Relay protocol noise
       if (isRelayNoise(content)) return false;
-
-      // Spam / phishing
       if (isSpam(content)) return false;
-
-      // JSON-looking content (presence events, etc.)
       if (content.startsWith("{") && content.endsWith("}")) return false;
       if (content.includes('"type":"presence"')) return false;
 
-      // Language filter: only Brahmic (Bengali) and Latin (English/European)
-      const result = detectScriptFamily(content);
-      return result.top === "br" || result.top === "la";
+      // Script filter: only Bengali + Latin content
+      return isAllowedScript(content);
     });
 
     setNotes(filtered);
     setLoading(false);
-
-    // Fetch profiles for everyone in the filtered feed
     ensureProfiles(filtered.map((e) => e.pubkey));
   };
 
@@ -92,7 +108,6 @@ export function NoteList({ refreshTrigger, newNotes, feedMode, following }) {
     loadNotes();
   }, [refreshTrigger, feedMode]);
 
-  // Merge optimistic notes with fetched notes, deduplicate
   const allNotes = [...newNotes, ...notes];
   const uniqueNotes = allNotes.filter(
     (note, index, self) => index === self.findIndex((n) => n.id === note.id)
