@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { nip19 } from "nostr-tools";
 import { Akshar } from "akshar-typing";
 import {
@@ -10,7 +10,7 @@ import { NoteCard } from "./NoteCard";
 import { useProfile, getDisplayName } from "../contexts/useProfile";
 import { useAccount } from "../contexts/useAccount";
 
-export function SearchView() {
+export function SearchView({ initialQuery, onQueryConsumed }) {
   const { profiles, ensureProfiles } = useProfile();
   const { account } = useAccount();
   const [query, setQuery] = useState("");
@@ -21,10 +21,9 @@ export function SearchView() {
   const [foundPubkey, setFoundPubkey] = useState(null);
   const [error, setError] = useState("");
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
+  // Core search logic — takes the query string directly
+  const runSearch = async (q) => {
+    if (!q || !q.trim()) return;
 
     setLoading(true);
     setError("");
@@ -32,9 +31,7 @@ export function SearchView() {
     setFoundPubkey(null);
 
     try {
-      // -----------------------------------------------------------------
-      // Case 1: npub — show that user's profile and notes
-      // -----------------------------------------------------------------
+      // --- Case 1: npub ---
       if (q.startsWith("npub1")) {
         const decoded = nip19.decode(q);
         if (decoded.type !== "npub") throw new Error("Not an npub");
@@ -50,9 +47,7 @@ export function SearchView() {
         return;
       }
 
-      // -----------------------------------------------------------------
-      // Case 2: Hashtag (#tag) — direct t-tag search on relays
-      // -----------------------------------------------------------------
+      // --- Case 2: Hashtag ---
       if (q.startsWith("#")) {
         const tag = q.slice(1).toLowerCase();
 
@@ -63,7 +58,6 @@ export function SearchView() {
             : Promise.resolve([]),
         ]);
 
-        // Fall back to content matching for own notes without t tags
         const ownMatches = ownNotes.filter((n) => {
           const content = (n.content || "").toLowerCase();
           if (content.includes(`#${tag}`)) return true;
@@ -90,9 +84,7 @@ export function SearchView() {
         return;
       }
 
-      // -----------------------------------------------------------------
-      // Case 3: Keyword — NIP-50 full-text search + own notes fallback
-      // -----------------------------------------------------------------
+      // --- Case 3: Keyword ---
       const [searchResults, ownNotes] = await Promise.all([
         searchNotes(q, 50),
         account?.publicKey
@@ -100,8 +92,6 @@ export function SearchView() {
           : Promise.resolve([]),
       ]);
 
-      // Filter own notes for the keyword too — relays may not have
-      // indexed them yet, or may not have them in the NIP-50 index
       const ownMatches = ownNotes.filter((n) =>
         (n.content || "").toLowerCase().includes(q.toLowerCase())
       );
@@ -127,6 +117,22 @@ export function SearchView() {
     }
   };
 
+  // Form submit — reads current state and calls runSearch
+  const handleSearch = (e) => {
+    e.preventDefault();
+    runSearch(query.trim());
+  };
+
+  // Auto-run when navigated from Explore with a hashtag
+  useEffect(() => {
+    if (initialQuery) {
+      setQuery(initialQuery);
+      runSearch(initialQuery);            // ← call directly, no requestSubmit
+      if (onQueryConsumed) onQueryConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
+
   const foundProfile = foundPubkey ? profiles.get(foundPubkey) : null;
   const foundName = foundPubkey
     ? getDisplayName(foundProfile, foundPubkey.slice(0, 12) + "...")
@@ -135,10 +141,9 @@ export function SearchView() {
   const SUGGESTED_TAGS = ["বাংলা", "bengali", "bangla", "kolkata", "bangladesh"];
 
   const handleTagClick = (tag) => {
-    setQuery(`#${tag}`);
-    setTimeout(() => {
-      document.getElementById("search-form")?.requestSubmit();
-    }, 0);
+    const q = `#${tag}`;
+    setQuery(q);
+    runSearch(q);
   };
 
   const inputClassName =

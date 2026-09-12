@@ -25,6 +25,7 @@ export default function App() {
     () => localStorage.getItem("balaka_lang_filter") || "both"
   );
   const [showProfileSetup, setShowProfileSetup] = useState(false);
+  const [pendingSearch, setPendingSearch] = useState(null);
 
   // Show profile setup page for brand new accounts
   useEffect(() => {
@@ -57,6 +58,13 @@ export default function App() {
       localStorage.setItem("balaka_lang_filter", next);
       return next;
     });
+  };
+
+  // Called when a hashtag is clicked in Explore — switches to the
+  // Search tab and passes the query along so it runs automatically.
+  const handleSearchRequest = (query) => {
+    setPendingSearch(query);
+    setTab("search");
   };
 
   if (loading) {
@@ -131,8 +139,15 @@ export default function App() {
             />
           </>
         )}
-        {tab === "explore" && <ExploreView />}
-        {tab === "search" && <SearchView />}
+        {tab === "explore" && (
+          <ExploreView onSearchRequest={handleSearchRequest} />
+        )}
+        {tab === "search" && (
+          <SearchView
+            initialQuery={pendingSearch}
+            onQueryConsumed={() => setPendingSearch(null)}
+          />
+        )}
         {tab === "notifications" && <NotificationsView />}
         {tab === "profile" && <ProfileView />}
       </main>

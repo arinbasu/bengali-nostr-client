@@ -35,12 +35,27 @@ function hasBengali(text) {
 function extractHashtags(event) {
   const tags = new Set();
   const content = event.content || "";
+
   const contentTags = content.match(/#[\u0980-\u09FF\w]+/g) || [];
   contentTags.forEach((t) => tags.add(t.slice(1).toLowerCase()));
+
   event.tags
     .filter((t) => t[0] === "t" && t[1])
     .forEach((t) => tags.add(t[1].toLowerCase()));
+
   return [...tags];
+}
+
+// Filter out junk hashtags (hex strings, very long tokens, etc.)
+function isMeaningfulTag(tag) {
+  if (!tag) return false;
+  if (tag.length < 2) return false;
+  if (tag.length > 30) return false;
+  // Reject pure hex strings of 16+ characters
+  if (/^[0-9a-f]{16,}$/i.test(tag)) return false;
+  // Reject pure numeric strings
+  if (/^\d+$/.test(tag)) return false;
+  return true;
 }
 
 // --- cache helpers ---
@@ -73,7 +88,7 @@ function saveCache(data) {
 
 // --- main component ---
 
-export function ExploreView() {
+export function ExploreView({ onSearchRequest }) {
   const { profiles, ensureProfiles } = useProfile();
   const { account, following, follow } = useAccount();
   const [trendingTags, setTrendingTags] = useState([]);
@@ -92,10 +107,11 @@ export function ExploreView() {
       return isAllowedScript(c);
     });
 
+    // --- Trending hashtags ---
     const tagCounts = new Map();
     clean.forEach((e) => {
       extractHashtags(e).forEach((tag) => {
-        if (tag.length < 2) return;
+        if (!isMeaningfulTag(tag)) return;
         tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
       });
     });
@@ -105,9 +121,14 @@ export function ExploreView() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10);
 
+    // --- Suggested accounts ---
     const authorStats = new Map();
     clean.forEach((e) => {
-      const prev = authorStats.get(e.pubkey) || { total: 0, bengali: 0, latest: 0 };
+      const prev = authorStats.get(e.pubkey) || {
+        total: 0,
+        bengali: 0,
+        latest: 0,
+      };
       prev.total += 1;
       if (hasBengali(e.content || "")) prev.bengali += 1;
       prev.latest = Math.max(prev.latest, e.created_at);
@@ -128,6 +149,7 @@ export function ExploreView() {
       .slice(0, 8)
       .map(([pubkey]) => pubkey);
 
+    // --- Recent Bengali posts (excluding own) ---
     const popular = clean
       .filter((e) => {
         if (!hasBengali(e.content || "")) return false;
@@ -137,7 +159,6 @@ export function ExploreView() {
       .sort((a, b) => b.created_at - a.created_at)
       .slice(0, 10);
 
-    // Store as plain objects (events are serializable)
     return {
       trendingTags: topTags,
       suggestedAccounts: suggestions,
@@ -145,7 +166,7 @@ export function ExploreView() {
     };
   };
 
-  // Load from cache on mount; if no cache, fetch fresh
+  // Load from cache on mount; fetch fresh if no cache
   useEffect(() => {
     let cancelled = false;
 
@@ -189,6 +210,12 @@ export function ExploreView() {
     setRefreshing(false);
   };
 
+  const handleTagClick = (tag) => {
+    if (onSearchRequest) {
+      onSearchRequest(`#${tag}`);
+    }
+  };
+
   if (loading) {
     return <div className="p-8 text-center text-gray-400">লোড হচ্ছে...</div>;
   }
@@ -218,6 +245,7 @@ export function ExploreView() {
             {trendingTags.map(([tag, count]) => (
               <button
                 key={tag}
+                onClick={() => handleTagClick(tag)}
                 className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm rounded-full transition"
               >
                 #{tag}
@@ -234,9 +262,7 @@ export function ExploreView() {
           বাংলায় লেখেন যারা
         </h3>
         {suggestedAccounts.length === 0 ? (
-          <p className="text-xs text-gray-400">
-            এখনো কোনো পরামর্শ নেই।
-          </p>
+          <p className="text-xs text-gray-400">এখনো কোনো পরামর্শ নেই।</p>
         ) : (
           <div className="space-y-3">
             {suggestedAccounts.map((pubkey) => {
@@ -248,7 +274,11 @@ export function ExploreView() {
               return (
                 <div key={pubkey} className="flex items-center gap-3">
                   {profile?.picture ? (
-                    <img src={profile.picture} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                    <img
+                      src={profile.picture}
+                      alt=""
+                      className="w-10 h-10 rounded-full object-cover flex-shrink-0"
+                    />
                   ) : (
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex-shrink-0" />
                   )}
@@ -264,7 +294,9 @@ export function ExploreView() {
                       {name}
                     </a>
                     {profile?.about && (
-                      <p className="text-xs text-gray-500 truncate">{profile.about}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {profile.about}
+                      </p>
                     )}
                   </div>
                   <button
@@ -290,7 +322,9 @@ export function ExploreView() {
             এখনো কোনো বাংলা পোস্ট পাওয়া যায়নি।
           </p>
         ) : (
-          popularNotes.map((event) => <NoteCard key={event.id} event={event} />)
+          popularNotes.map((event) => (
+            <NoteCard key={event.id} event={event} />
+          ))
         )}
       </section>
     </div>
