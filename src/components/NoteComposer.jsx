@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Akshar } from "akshar-typing";
-import { publishNote } from "../lib/nostr";     // ← Removed getOrCreateKeypair
+import { publishNote } from "../lib/nostr";
 import { uploadImage } from "../lib/media";
 import { useAccount } from "../contexts/useAccount";
 
@@ -9,6 +9,7 @@ export function NoteComposer({ onPublished }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [status, setStatus] = useState("idle");
+  const [bengaliOn, setBengaliOn] = useState(true);
   const { account } = useAccount();
 
   const handleFileChange = (e) => {
@@ -21,8 +22,6 @@ export function NoteComposer({ onPublished }) {
 
   const handlePublish = async () => {
     if (!content.trim() && !file) return;
-
-    // Guard: prevent posting if there's no secret key (view-only mode)
     if (!account?.secretKey) {
       setStatus("error");
       return;
@@ -37,7 +36,6 @@ export function NoteComposer({ onPublished }) {
       }
 
       setStatus("publishing");
-      // ← FIXED: use the logged-in account's secret key
       const publishedEvent = await publishNote(content, account.secretKey, tags);
 
       setStatus("done");
@@ -52,38 +50,80 @@ export function NoteComposer({ onPublished }) {
     }
   };
 
+  // Shared textarea styles so both modes look identical
+  const textareaClassName =
+    "w-full text-lg p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none";
+
   return (
     <div className="bg-white p-4 border-b border-gray-200">
-      <Akshar
-        lang="bn"
-        value={content}
-        onChangeText={setContent}
-        maxOptions={5}
-        renderComponent={(props) => (
-          <textarea
-            {...props}
-            rows={3}
-            placeholder="কিছু লিখুন..."
-            className="w-full text-lg p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-        )}
-      />
+      {/* Bengali mode: Akshar transliteration */}
+      {bengaliOn ? (
+        <Akshar
+          lang="bn"
+          value={content}
+          onChangeText={setContent}
+          maxOptions={5}
+          renderComponent={(props) => (
+            <textarea
+              {...props}
+              rows={3}
+              placeholder="কিছু লিখুন... (ইংরেজি অক্ষরে টাইপ করুন)"
+              className={textareaClassName}
+            />
+          )}
+        />
+      ) : (
+        /* English mode: plain textarea, no transliteration */
+        <textarea
+          rows={3}
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          placeholder="Write in English..."
+          className={textareaClassName}
+        />
+      )}
+
       {preview && (
         <div className="mt-2 relative">
           <img src={preview} alt="Preview" className="rounded-lg max-h-60 object-cover" />
           <button
-            onClick={() => { setFile(null); setPreview(null); }}
+            onClick={() => {
+              setFile(null);
+              setPreview(null);
+            }}
             className="absolute top-2 right-2 bg-black/50 text-white rounded-full p-1 text-xs"
           >
             ✕
           </button>
         </div>
       )}
+
       <div className="flex items-center justify-between mt-3">
-        <label className="cursor-pointer text-blue-600 hover:text-blue-700">
-          <input type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
-          <span className="text-2xl">📷</span>
-        </label>
+        <div className="flex items-center gap-3">
+          <label className="cursor-pointer text-blue-600 hover:text-blue-700">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <span className="text-2xl">📷</span>
+          </label>
+
+          {/* Language toggle */}
+          <button
+            onClick={() => setBengaliOn((v) => !v)}
+            className={`text-xs px-2 py-1 rounded-full border transition ${
+              bengaliOn
+                ? "border-blue-500 text-blue-600 bg-blue-50"
+                : "border-gray-300 text-gray-500 bg-white"
+            }`}
+            title={bengaliOn ? "Switch to English typing" : "বাংলায় টাইপ করুন"}
+          >
+            {bengaliOn ? "অ" : "A"}
+          </button>
+        </div>
+
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-500">
             {status === "uploading" && "ছবি আপলোড হচ্ছে..."}
@@ -93,7 +133,11 @@ export function NoteComposer({ onPublished }) {
           </span>
           <button
             onClick={handlePublish}
-            disabled={(!content.trim() && !file) || status === "publishing" || status === "uploading"}
+            disabled={
+              (!content.trim() && !file) ||
+              status === "publishing" ||
+              status === "uploading"
+            }
             className="px-5 py-2 bg-blue-600 text-white rounded-full font-medium hover:bg-blue-700 disabled:opacity-50"
           >
             পোস্ট করুন
