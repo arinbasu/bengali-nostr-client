@@ -70,10 +70,14 @@ export function LoginScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-bg">
       <div className="bg-surface p-6 rounded-2xl shadow-lg max-w-md w-full">
-        <div className="flex items-center gap-2 mb-6">
-          <CraneIcon className="w-8 h-8 text-primary" />
-          <h1 className="text-2xl font-bold text-text">বলাকা</h1>
-        </div>
+       <div className="flex items-center gap-2 mb-4">
+  <CraneIcon className="w-8 h-8 text-blue-600" />
+  <h1 className="text-2xl font-bold text-gray-900">বলাকা</h1>
+</div>
+
+<p className="text-sm text-gray-500 mb-6">
+  শুরু করতে একটি অ্যাকাউন্ট তৈরি করুন, অথবা আপনার আগের নস্ট্র পরিচয় (nsec / npub) দিয়ে প্রবেশ করুন।
+</p> 
 
         <div className="flex gap-2 mb-6">
           <button onClick={() => setTab("new")} className={`flex-1 py-2 rounded-lg text-sm font-medium ${tab === "new" ? "bg-primary text-primary-text" : "bg-bg text-muted"}`}>নতুন</button>

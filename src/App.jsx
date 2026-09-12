@@ -6,27 +6,44 @@ import { NoteList } from "./components/NoteList";
 import { LoginScreen } from "./components/LoginScreen";
 import { ProfileView } from "./components/ProfileView";
 import { NotificationsView } from "./components/NotificationsView";
-import { useAccount } from "./contexts/useAccount";
 import { SearchView } from "./components/SearchView";
 import { ExploreView } from "./components/ExploreView";
+import { WelcomeScreen } from "./components/WelcomeScreen";
+import { useAccount } from "./contexts/useAccount";
 
 export default function App() {
-  // All hooks at the top, before any returns
   const { account, loading, following } = useAccount();
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [newNotes, setNewNotes] = useState([]);
   const [tab, setTab] = useState("home");
   const [feedMode, setFeedMode] = useState("global");
+  const [onboarded, setOnboarded] = useState(
+    () => localStorage.getItem("balaka_onboarded") === "true"
+  );
 
   const handlePublished = (newEvent) => {
     setNewNotes((prev) => [newEvent, ...prev]);
     setRefreshTrigger((prev) => prev + 1);
   };
 
-  // Early returns AFTER all hooks
+  const handleOnboardingComplete = () => {
+    localStorage.setItem("balaka_onboarded", "true");
+    setOnboarded(true);
+  };
+
   if (loading) {
-    return <div className="p-8 text-center bg-bg min-h-screen text-text">লোড হচ্ছে...</div>;
+    return (
+      <div className="p-8 text-center bg-bg min-h-screen text-text">
+        লোড হচ্ছে...
+      </div>
+    );
   }
+
+  // Show welcome screen to first-time visitors
+  if (!onboarded) {
+    return <WelcomeScreen onComplete={handleOnboardingComplete} />;
+  }
+
   if (!account) return <LoginScreen />;
 
   return (
@@ -66,8 +83,8 @@ export default function App() {
             />
           </>
         )}
-        {tab === "search" && <SearchView />}
         {tab === "explore" && <ExploreView />}
+        {tab === "search" && <SearchView />}
         {tab === "notifications" && <NotificationsView />}
         {tab === "profile" && <ProfileView />}
       </main>
