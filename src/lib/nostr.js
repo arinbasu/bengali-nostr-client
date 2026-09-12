@@ -123,7 +123,7 @@ export function getNpub() {
 // FETCHING
 // =========================================================================
 
-export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 4000) {
+export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 10000) {
   const filter = { kinds: [1] };
   if (authors && authors.length > 0) {
     filter.authors = authors;
@@ -145,7 +145,7 @@ export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 4
   return all.slice(0, limit);
 }
 
-export async function fetchContactList(pubkey, timeoutMs = 4000) {
+export async function fetchContactList(pubkey, timeoutMs = 10000) {
   const filter = { kinds: [3], authors: [pubkey] };
   const results = await Promise.all(
     DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
@@ -161,7 +161,7 @@ export async function fetchContactList(pubkey, timeoutMs = 4000) {
     .map((t) => t[1]);
 }
 
-export async function fetchProfiles(pubkeys, timeoutMs = 8000) {
+export async function fetchProfiles(pubkeys, timeoutMs = 10000) {
   if (!pubkeys || pubkeys.length === 0) return new Map();
 
   const profileMap = new Map();
