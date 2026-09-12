@@ -7,6 +7,8 @@ import { LoginScreen } from "./components/LoginScreen";
 import { ProfileView } from "./components/ProfileView";
 import { NotificationsView } from "./components/NotificationsView";
 import { useAccount } from "./contexts/useAccount";
+import { SearchView } from "./components/SearchView";
+import { ExploreView } from "./components/ExploreView";
 
 export default function App() {
   // All hooks at the top, before any returns
@@ -64,9 +66,8 @@ export default function App() {
             />
           </>
         )}
-        {tab === "explore" && (
-          <div className="p-8 text-center text-muted">অন্বেষণ শীঘ্রই আসছে</div>
-        )}
+        {tab === "search" && <SearchView />}
+        {tab === "explore" && <ExploreView />}
         {tab === "notifications" && <NotificationsView />}
         {tab === "profile" && <ProfileView />}
       </main>

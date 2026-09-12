@@ -1,9 +1,10 @@
 export function BottomNav({ current, onChange }) {
   const tabs = [
     { id: "home", icon: "🏠", label: "হোম" },
-    { id: "explore", icon: "🔍", label: "অন্বেষণ" },
+    { id: "explore", icon: "🌐", label: "ঘুরে দেখুন " },     // trending, suggestions
+    { id: "search", icon: "🔍", label: "খোঁজ" },         // npub lookup, keyword search
     { id: "notifications", icon: "🔔", label: "বিজ্ঞপ্তি" },
-    { id: "profile", icon: "👤", label: "প্রোফাইল" },
+    { id: "profile", icon: "👤", label: "নিজের ব্যাপার" },
   ];
 
   return (
@@ -13,12 +14,16 @@ export function BottomNav({ current, onChange }) {
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className={`flex flex-col items-center transition ${
-              current === tab.id ? "text-blue-600" : "text-gray-500 hover:text-blue-600"
+            className={`flex flex-col items-center transition flex-1 ${
+              current === tab.id
+                ? "text-blue-600"
+                : "text-gray-500 hover:text-blue-600"
             }`}
           >
-            <span className="text-xl">{tab.icon}</span>
-            <span className="text-xs mt-0.5">{tab.label}</span>
+            <span className="text-lg">{tab.icon}</span>
+            <span className="text-[10px] mt-0.5 leading-tight">
+              {tab.label}
+            </span>
           </button>
         ))}
       </div>
