@@ -4,6 +4,8 @@ import { publishNote } from "../lib/nostr";
 import { uploadImage } from "../lib/media";
 import { useAccount } from "../contexts/useAccount";
 
+const MAX_LENGTH = 5000;
+
 export function NoteComposer({ onPublished }) {
   const [content, setContent] = useState("");
   const [file, setFile] = useState(null);
@@ -50,42 +52,53 @@ export function NoteComposer({ onPublished }) {
     }
   };
 
-  // Shared textarea styles so both modes look identical
+  const remaining = MAX_LENGTH - content.length;
+  const isNearLimit = remaining < 200;
+
   const textareaClassName =
     "w-full text-lg p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none";
 
   return (
     <div className="bg-white p-4 border-b border-gray-200">
-      {/* Bengali mode: Akshar transliteration */}
-      {bengaliOn ? (
-        <Akshar
-          lang="bn"
-          value={content}
-          onChangeText={setContent}
-          maxOptions={5}
-          renderComponent={(props) => (
-            <textarea
-              {...props}
-              rows={3}
-              placeholder="কিছু লিখুন... (ইংরেজি অক্ষরে টাইপ করুন)"
-              className={textareaClassName}
-            />
-          )}
-        />
-      ) : (
-        /* English mode: plain textarea, no transliteration */
-        <textarea
-          rows={3}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          placeholder="Write in English..."
-          className={textareaClassName}
-        />
-      )}
+      {/* relative + z-50 ensures the suggestion dropdown isn't clipped by the feed below */}
+      <div className="relative z-50">
+        {bengaliOn ? (
+          <Akshar
+            lang="bn"
+            value={content}
+            onChangeText={(text) => {
+              if (text.length <= MAX_LENGTH) setContent(text);
+            }}
+            maxOptions={5}
+            containerClassName="relative z-50"
+            renderComponent={(props) => (
+              <textarea
+                {...props}
+                style={{ height: "120px" }}
+                placeholder="কিছু লিখুন... (ইংরেজি অক্ষরে টাইপ করুন)"
+                className={textareaClassName}
+              />
+            )}
+          />
+        ) : (
+          <textarea
+            style={{ height: "120px" }}
+            value={content}
+            maxLength={MAX_LENGTH}
+            onChange={(e) => setContent(e.target.value)}
+            placeholder="Write in English..."
+            className={textareaClassName}
+          />
+        )}
+      </div>
 
       {preview && (
         <div className="mt-2 relative">
-          <img src={preview} alt="Preview" className="rounded-lg max-h-60 object-cover" />
+          <img
+            src={preview}
+            alt="Preview"
+            className="rounded-lg max-h-60 object-cover"
+          />
           <button
             onClick={() => {
               setFile(null);
@@ -110,7 +123,6 @@ export function NoteComposer({ onPublished }) {
             <span className="text-2xl">📷</span>
           </label>
 
-          {/* Language toggle */}
           <button
             onClick={() => setBengaliOn((v) => !v)}
             className={`text-xs px-2 py-1 rounded-full border transition ${
@@ -125,18 +137,28 @@ export function NoteComposer({ onPublished }) {
         </div>
 
         <div className="flex items-center gap-3">
+          <span
+            className={`text-xs ${
+              isNearLimit ? "text-red-500" : "text-gray-400"
+            }`}
+          >
+            {content.length} / {MAX_LENGTH}
+          </span>
+
           <span className="text-sm text-gray-500">
             {status === "uploading" && "ছবি আপলোড হচ্ছে..."}
             {status === "publishing" && "পোস্ট হচ্ছে..."}
             {status === "done" && "পোস্ট হয়েছে ✅"}
             {status === "error" && "সমস্যা হয়েছে"}
           </span>
+
           <button
             onClick={handlePublish}
             disabled={
               (!content.trim() && !file) ||
               status === "publishing" ||
-              status === "uploading"
+              status === "uploading" ||
+              content.length > MAX_LENGTH
             }
             className="px-5 py-2 bg-blue-600 text-white rounded-full font-medium hover:bg-blue-700 disabled:opacity-50"
           >
