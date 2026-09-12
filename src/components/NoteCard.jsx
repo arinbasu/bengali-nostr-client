@@ -6,6 +6,7 @@ import { useProfile, getDisplayName } from "../contexts/useProfile";
 import { NoteContent } from "./NoteContent";
 import { SensitiveContent } from "./SensitiveContent";
 import { isSensitive, getWarningReason } from "../lib/nsfw";
+import { ThreadView } from "./ThreadView";
 
 const TRUNCATE_LENGTH = 400;
 
@@ -48,13 +49,14 @@ export function NoteCard({ event }) {
   const [hasReposted, setHasReposted] = useState(false);
   const [textRevealed, setTextRevealed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [showThread, setShowThread] = useState(false);      // ← ADDED
   const { account, following, follow, unfollow } = useAccount();
   const { profiles } = useProfile();
 
   const npub = nip19.npubEncode(event.pubkey);
-  const shortNpub = `${npub.slice(0, 12)}...${npub.slice(-4)}`;   // ← NEW
+  const shortNpub = `${npub.slice(0, 12)}...${npub.slice(-4)}`;
   const profile = profiles.get(event.pubkey);
-  const displayName = getDisplayName(profile, shortNpub);          // ← CHANGED
+  const displayName = getDisplayName(profile, shortNpub);
 
   const isFollowing = following?.has(event.pubkey) ?? false;
   const isOwnNote = event.pubkey === account?.publicKey;
@@ -122,7 +124,6 @@ export function NoteCard({ event }) {
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 text-sm text-gray-500">
-            {/* ← CHANGED: name is now a link, gray if no profile, black if profile */}
             <a
               href={`https://njump.me/${npub}`}
               target="_blank"
@@ -200,7 +201,13 @@ export function NoteCard({ event }) {
           )}
 
           <div className="flex items-center gap-8 mt-3 text-gray-500">
-            <button className="flex items-center gap-1.5 hover:text-blue-500 transition">
+            {/* ← CHANGED: reply button now toggles the thread */}
+            <button
+              onClick={() => setShowThread((v) => !v)}
+              className={`flex items-center gap-1.5 transition ${
+                showThread ? "text-blue-500" : "hover:text-blue-500"
+              }`}
+            >
               <span className="text-lg">💬</span>
               <span className="text-sm">উত্তর</span>
             </button>
@@ -227,6 +234,9 @@ export function NoteCard({ event }) {
               </span>
             </button>
           </div>
+
+          {/* ← ADDED: thread view */}
+          {showThread && <ThreadView rootEvent={event} />}
         </div>
       </div>
     </div>
