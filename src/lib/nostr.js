@@ -30,8 +30,6 @@ const repliesCache = new Map();
 const parentEventCache = new Map();
 
 // How long a connection can sit idle before we force a reconnect.
-// Mobile Safari kills idle WebSockets in 20-30s, so we do it ourselves
-// before Safari can, avoiding "silent dead socket" failures.
 const RELAY_MAX_IDLE_MS = 20 * 1000;
 
 // =========================================================================
@@ -117,9 +115,33 @@ export function closeAllRelays() {
   relayPool.clear();
 }
 
+// Force-close all relays and start fresh.
+// Use when connections are suspected of being stale
+// (Safari keeps them half-alive after idle).
+export function resetRelayPool() {
+  closeAllRelays();
+}
+
 // Diagnostic: how many relays are currently pooled
 export function getRelayCount() {
   return relayPool.size;
+}
+
+// Generic retry-with-fresh-pool wrapper.
+// Runs `fn`, and if it returns an empty result, resets the relay
+// pool, waits briefly for Safari to release sockets, and tries again.
+async function withRetry(fn, isEmpty) {
+  let result = await fn();
+  if (!isEmpty(result)) return result;
+
+  console.warn("First fetch returned empty — resetting relay pool and retrying");
+  resetRelayPool();
+
+  // Give Safari a moment to fully release the sockets
+  await new Promise((r) => setTimeout(r, 500));
+
+  result = await fn();
+  return result;
 }
 
 // =========================================================================
@@ -153,10 +175,8 @@ export function getNpub() {
 // FETCHING
 // =========================================================================
 
-// Streaming feed — resolves as soon as 2 relays respond with data,
-// or all relays respond, or the timeout fires. Prevents "wait for the
-// slowest relay" delays.
-export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 10000) {
+// Internal: single-shot feed fetch with streaming resolution.
+async function fetchRecentNotesOnce(limit, authors, timeoutMs) {
   const filter = { kinds: [1] };
   if (authors && authors.length > 0) {
     filter.authors = authors;
@@ -186,14 +206,11 @@ export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 1
         }
         responded++;
 
-        // Resolve early if at least 2 relays have responded AND we have data
         if (!resolved && responded >= 2 && merged.size > 0) {
           clearTimeout(hardTimeout);
           finish();
           return;
         }
-
-        // If all relays have responded, finish immediately
         if (!resolved && responded === total) {
           clearTimeout(hardTimeout);
           finish();
@@ -209,7 +226,16 @@ export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 1
   });
 }
 
-export async function fetchContactList(pubkey, timeoutMs = 10000) {
+// Public: fetch feed with automatic retry on empty result.
+export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 10000) {
+  return withRetry(
+    () => fetchRecentNotesOnce(limit, authors, timeoutMs),
+    (events) => events.length === 0
+  );
+}
+
+// Internal: contact list fetch.
+async function fetchContactListOnce(pubkey, timeoutMs) {
   const filter = { kinds: [3], authors: [pubkey] };
   const results = await Promise.all(
     DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
@@ -225,13 +251,17 @@ export async function fetchContactList(pubkey, timeoutMs = 10000) {
     .map((t) => t[1]);
 }
 
-export async function fetchProfiles(pubkeys, timeoutMs = 10000) {
-  if (!pubkeys || pubkeys.length === 0) return new Map();
+export async function fetchContactList(pubkey, timeoutMs = 10000) {
+  return withRetry(
+    () => fetchContactListOnce(pubkey, timeoutMs),
+    (list) => list.length === 0
+  );
+}
 
+// Internal: profiles fetch with chunking.
+async function fetchProfilesOnce(pubkeys, timeoutMs) {
   const profileMap = new Map();
 
-  // Chunk pubkeys into groups of 10 — prevents one slow relay
-  // from timing out the entire batch
   const chunks = [];
   for (let i = 0; i < pubkeys.length; i += 10) {
     chunks.push(pubkeys.slice(i, i + 10));
@@ -261,6 +291,14 @@ export async function fetchProfiles(pubkeys, timeoutMs = 10000) {
   return profileMap;
 }
 
+export async function fetchProfiles(pubkeys, timeoutMs = 10000) {
+  if (!pubkeys || pubkeys.length === 0) return new Map();
+  return withRetry(
+    () => fetchProfilesOnce(pubkeys, timeoutMs),
+    (map) => map.size === 0
+  );
+}
+
 export async function fetchEventById(eventId, relayHints = [], timeoutMs = 4000) {
   if (!eventId) return null;
 
@@ -283,7 +321,8 @@ export async function fetchParentEvent(eventId, relayHints = [], timeoutMs = 300
   return ev;
 }
 
-export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 8000) {
+// Internal: notifications fetch.
+async function fetchNotificationsOnce(pubkey, limit, timeoutMs) {
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
 
   const filter = {
@@ -308,8 +347,15 @@ export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 8000) {
   return all.slice(0, limit);
 }
 
-// Search notes with a specific hashtag using NIP-12 `t` tag filtering
-export async function searchByHashtag(tag, limit = 50, timeoutMs = 8000) {
+export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 8000) {
+  return withRetry(
+    () => fetchNotificationsOnce(pubkey, limit, timeoutMs),
+    (list) => list.length === 0
+  );
+}
+
+// Internal: hashtag search.
+async function searchByHashtagOnce(tag, limit, timeoutMs) {
   const cleanTag = tag.toLowerCase().replace(/^#/, "");
 
   const tagFilter = { kinds: [1], "#t": [cleanTag] };
@@ -351,10 +397,15 @@ export async function searchByHashtag(tag, limit = 50, timeoutMs = 8000) {
   return all.slice(0, limit);
 }
 
-// Full-text keyword search via NIP-50 compatible relays
-export async function searchNotes(keyword, limit = 50, timeoutMs = 8000) {
-  if (!keyword || !keyword.trim()) return [];
+export async function searchByHashtag(tag, limit = 50, timeoutMs = 8000) {
+  return withRetry(
+    () => searchByHashtagOnce(tag, limit, timeoutMs),
+    (list) => list.length === 0
+  );
+}
 
+// Internal: keyword search.
+async function searchNotesOnce(keyword, limit, timeoutMs) {
   const filter = { kinds: [1], search: keyword.trim() };
 
   const results = await Promise.all(
@@ -371,6 +422,14 @@ export async function searchNotes(keyword, limit = 50, timeoutMs = 8000) {
   const all = Array.from(merged.values());
   all.sort((a, b) => b.created_at - a.created_at);
   return all.slice(0, limit);
+}
+
+export async function searchNotes(keyword, limit = 50, timeoutMs = 8000) {
+  if (!keyword || !keyword.trim()) return [];
+  return withRetry(
+    () => searchNotesOnce(keyword, limit, timeoutMs),
+    (list) => list.length === 0
+  );
 }
 
 // =========================================================================
@@ -596,7 +655,8 @@ export async function publishReply(parentEvent, content, secretKey, extraTags = 
   return event;
 }
 
-export async function fetchReplies(noteId, timeoutMs = 8000) {
+// Internal: replies fetch.
+async function fetchRepliesOnce(noteId, timeoutMs) {
   console.log("🔍 fetchReplies called for:", noteId);
 
   if (repliesCache.has(noteId)) {
@@ -635,6 +695,13 @@ export async function fetchReplies(noteId, timeoutMs = 8000) {
   }
 
   return all;
+}
+
+export async function fetchReplies(noteId, timeoutMs = 8000) {
+  // Note: we don't retry replies on empty — a note with no replies
+  // is a normal, common case. Retrying would double the latency
+  // for every reply-less note.
+  return fetchRepliesOnce(noteId, timeoutMs);
 }
 
 export function clearRepliesCache(noteId) {
