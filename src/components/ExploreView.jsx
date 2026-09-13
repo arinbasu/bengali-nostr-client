@@ -5,10 +5,8 @@ import { useProfile, getDisplayName } from "../contexts/useProfile";
 import { useAccount } from "../contexts/useAccount";
 import { NoteCard } from "./NoteCard";
 
-const CACHE_KEY = "balaka_explore_cache";
-const CACHE_MAX_AGE_MS = 30 * 60 * 1000; // 30 minutes
-
-// --- helpers ---
+const CACHE_KEY = "balaka_explore_cache_v3";
+const CACHE_MAX_AGE_MS = 30 * 60 * 1000;
 
 function countMatches(text, regex) {
   return (text.match(regex) || []).length;
@@ -46,19 +44,14 @@ function extractHashtags(event) {
   return [...tags];
 }
 
-// Filter out junk hashtags (hex strings, very long tokens, etc.)
 function isMeaningfulTag(tag) {
   if (!tag) return false;
   if (tag.length < 2) return false;
   if (tag.length > 30) return false;
-  // Reject pure hex strings of 16+ characters
   if (/^[0-9a-f]{16,}$/i.test(tag)) return false;
-  // Reject pure numeric strings
   if (/^\d+$/.test(tag)) return false;
   return true;
 }
-
-// --- cache helpers ---
 
 function loadCache() {
   try {
@@ -86,8 +79,6 @@ function saveCache(data) {
   } catch {}
 }
 
-// --- main component ---
-
 export function ExploreView({ onSearchRequest }) {
   const { profiles, ensureProfiles } = useProfile();
   const { account, following, follow } = useAccount();
@@ -96,9 +87,11 @@ export function ExploreView({ onSearchRequest }) {
   const [popularNotes, setPopularNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [debugInfo, setDebugInfo] = useState("");
 
   const computeExplore = async () => {
     const events = await fetchRecentNotes(300);
+    console.log(`Explore: fetched ${events.length} notes`);
 
     const clean = events.filter((e) => {
       const c = (e.content || "").trim();
@@ -107,7 +100,10 @@ export function ExploreView({ onSearchRequest }) {
       return isAllowedScript(c);
     });
 
-    // --- Trending hashtags ---
+    const bengaliNotes = clean.filter((e) => hasBengali(e.content || ""));
+    console.log(`Explore: ${clean.length} clean, ${bengaliNotes.length} with Bengali`);
+
+    // Trending hashtags
     const tagCounts = new Map();
     clean.forEach((e) => {
       extractHashtags(e).forEach((tag) => {
@@ -121,14 +117,10 @@ export function ExploreView({ onSearchRequest }) {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10);
 
-    // --- Suggested accounts ---
+    // Suggested accounts
     const authorStats = new Map();
     clean.forEach((e) => {
-      const prev = authorStats.get(e.pubkey) || {
-        total: 0,
-        bengali: 0,
-        latest: 0,
-      };
+      const prev = authorStats.get(e.pubkey) || { total: 0, bengali: 0, latest: 0 };
       prev.total += 1;
       if (hasBengali(e.content || "")) prev.bengali += 1;
       prev.latest = Math.max(prev.latest, e.created_at);
@@ -149,7 +141,7 @@ export function ExploreView({ onSearchRequest }) {
       .slice(0, 8)
       .map(([pubkey]) => pubkey);
 
-    // --- Recent Bengali posts (excluding own) ---
+    // Recent Bengali posts (excluding own)
     const popular = clean
       .filter((e) => {
         if (!hasBengali(e.content || "")) return false;
@@ -163,35 +155,53 @@ export function ExploreView({ onSearchRequest }) {
       trendingTags: topTags,
       suggestedAccounts: suggestions,
       popularNotes: popular,
+      debug: `${events.length} fetched, ${clean.length} clean, ${bengaliNotes.length} Bengali`,
     };
   };
 
-  // Load from cache on mount; fetch fresh if no cache
+  // Load cached data as initial state, then ALWAYS fetch fresh
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      // Show cached data immediately (if any)
       const cached = loadCache();
-
       if (cached) {
-        if (cancelled) return;
         setTrendingTags(cached.trendingTags || []);
         setSuggestedAccounts(cached.suggestedAccounts || []);
         setPopularNotes(cached.popularNotes || []);
         setLoading(false);
-        ensureProfiles(cached.suggestedAccounts || []);
-        return;
       }
 
+      // Always fetch fresh
       setLoading(true);
-      const data = await computeExplore();
-      if (cancelled) return;
-      setTrendingTags(data.trendingTags);
-      setSuggestedAccounts(data.suggestedAccounts);
-      setPopularNotes(data.popularNotes);
-      ensureProfiles(data.suggestedAccounts);
-      saveCache(data);
-      setLoading(false);
+      try {
+        const data = await computeExplore();
+        if (cancelled) return;
+
+        setTrendingTags(data.trendingTags);
+        setSuggestedAccounts(data.suggestedAccounts);
+        setPopularNotes(data.popularNotes);
+        setDebugInfo(data.debug);
+        ensureProfiles(data.suggestedAccounts);
+
+        // Only save to cache if we actually got results
+        const hasData =
+          data.trendingTags.length > 0 ||
+          data.suggestedAccounts.length > 0 ||
+          data.popularNotes.length > 0;
+
+        if (hasData) {
+          saveCache(data);
+        } else {
+          console.warn("Explore: no data to cache");
+        }
+      } catch (err) {
+        console.error("Explore fetch failed:", err);
+        if (!cancelled) setDebugInfo("fetch failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     })();
 
     return () => {
@@ -201,29 +211,35 @@ export function ExploreView({ onSearchRequest }) {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    const data = await computeExplore();
-    setTrendingTags(data.trendingTags);
-    setSuggestedAccounts(data.suggestedAccounts);
-    setPopularNotes(data.popularNotes);
-    ensureProfiles(data.suggestedAccounts);
-    saveCache(data);
-    setRefreshing(false);
-  };
-
-  const handleTagClick = (tag) => {
-    if (onSearchRequest) {
-      onSearchRequest(`#${tag}`);
+    try {
+      const data = await computeExplore();
+      setTrendingTags(data.trendingTags);
+      setSuggestedAccounts(data.suggestedAccounts);
+      setPopularNotes(data.popularNotes);
+      setDebugInfo(data.debug);
+      ensureProfiles(data.suggestedAccounts);
+      saveCache(data);
+    } catch (err) {
+      console.error("Refresh failed:", err);
+    } finally {
+      setRefreshing(false);
     }
   };
 
-  if (loading) {
-    return <div className="p-8 text-center text-gray-400">লোড হচ্ছে...</div>;
-  }
+  const handleTagClick = (tag) => {
+    if (onSearchRequest) onSearchRequest(`#${tag}`);
+  };
+
+  // If everything is empty, show a diagnostic
+  const isAllEmpty =
+    trendingTags.length === 0 &&
+    suggestedAccounts.length === 0 &&
+    popularNotes.length === 0;
 
   return (
     <div>
-      {/* Refresh button */}
-      <div className="flex justify-end px-4 pt-3">
+      <div className="flex justify-between items-center px-4 pt-3">
+        <span className="text-[10px] text-gray-400">{debugInfo}</span>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
@@ -233,14 +249,24 @@ export function ExploreView({ onSearchRequest }) {
         </button>
       </div>
 
-      {/* Trending hashtags */}
-      <section className="p-4 border-b border-gray-200">
-        <h3 className="text-sm font-bold text-gray-900 mb-3">
-          ট্রেন্ডিং হ্যাশট্যাগ
-        </h3>
-        {trendingTags.length === 0 ? (
-          <p className="text-xs text-gray-400">এখনো কোনো হ্যাশট্যাগ নেই।</p>
-        ) : (
+      {loading && isAllEmpty && (
+        <div className="p-8 text-center text-gray-400">লোড হচ্ছে...</div>
+      )}
+
+      {!loading && isAllEmpty && (
+        <div className="p-8 text-center text-gray-500 text-sm">
+          <p className="mb-3">সাম্প্রতিক পোস্টে বাংলা কনটেন্ট পাওয়া যায়নি।</p>
+          <p className="text-xs text-gray-400">
+            আরও বাংলা পোস্ট তৈরি হলে এখানে দেখা যাবে।
+          </p>
+        </div>
+      )}
+
+      {trendingTags.length > 0 && (
+        <section className="p-4 border-b border-gray-200">
+          <h3 className="text-sm font-bold text-gray-900 mb-3">
+            ট্রেন্ডিং হ্যাশট্যাগ
+          </h3>
           <div className="flex flex-wrap gap-2">
             {trendingTags.map(([tag, count]) => (
               <button
@@ -253,17 +279,14 @@ export function ExploreView({ onSearchRequest }) {
               </button>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* Suggested Bengali accounts */}
-      <section className="p-4 border-b border-gray-200">
-        <h3 className="text-sm font-bold text-gray-900 mb-3">
-          বাংলায় লেখেন যারা
-        </h3>
-        {suggestedAccounts.length === 0 ? (
-          <p className="text-xs text-gray-400">এখনো কোনো পরামর্শ নেই।</p>
-        ) : (
+      {suggestedAccounts.length > 0 && (
+        <section className="p-4 border-b border-gray-200">
+          <h3 className="text-sm font-bold text-gray-900 mb-3">
+            বাংলায় লেখেন যারা
+          </h3>
           <div className="space-y-3">
             {suggestedAccounts.map((pubkey) => {
               const profile = profiles.get(pubkey);
@@ -309,24 +332,19 @@ export function ExploreView({ onSearchRequest }) {
               );
             })}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* Bengali posts */}
-      <section>
-        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
-          বাংলা পোস্ট
-        </div>
-        {popularNotes.length === 0 ? (
-          <p className="p-8 text-center text-xs text-gray-400">
-            এখনো কোনো বাংলা পোস্ট পাওয়া যায়নি।
-          </p>
-        ) : (
-          popularNotes.map((event) => (
+      {popularNotes.length > 0 && (
+        <section>
+          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+            বাংলা পোস্ট
+          </div>
+          {popularNotes.map((event) => (
             <NoteCard key={event.id} event={event} />
-          ))
-        )}
-      </section>
+          ))}
+        </section>
+      )}
     </div>
   );
 }
