@@ -206,15 +206,19 @@ async function fetchRecentNotesOnce(limit, authors, timeoutMs) {
         }
         responded++;
 
-        if (!resolved && responded >= 2 && merged.size > 0) {
+              // Early-resolve only when we have a substantial result.
+        // "2 relays + any data" was too eager — Safari's stale
+        // connections can return a tiny slice from a single relay.
+        if (!resolved && responded >= 3 && merged.size >= 50) {
           clearTimeout(hardTimeout);
           finish();
           return;
         }
+        // All relays have responded — finish regardless of count
         if (!resolved && responded === total) {
           clearTimeout(hardTimeout);
           finish();
-        }
+        }  
       } catch {
         responded++;
         if (responded === total && !resolved) {
