@@ -66,19 +66,29 @@ function isAllowedScript(text, langFilter) {
     cjk + hangul + cyrillic + arabic + devanagari +
     tamil + telugu + thai + hebrew + greek;
 
-  // Bengali-only mode: relaxed threshold
   if (langFilter === "bengali") {
-    if (bengali < 3) return false;                // at least 3 Bengali chars
+    if (bengali < 3) return false;
     const allowed = bengali + latin;
-    // Bengali must be at least 20% of the Bengali+Latin total
     return bengali / allowed >= 0.2;
   }
 
-  // Both mode
   const allowed = bengali + latin;
   if (allowed === 0) return false;
   const total = allowed + disallowed;
   return disallowed / total <= 0.15;
+}
+
+// Common junk filter — applies to network notes only
+function isJunkNote(event) {
+  const content = (event.content || "").trim();
+  if (!content) return true;
+  if (isTooShort(content)) return true;
+  if (isHexDump(content)) return true;
+  if (isRelayNoise(content)) return true;
+  if (isSpam(content)) return true;
+  if (content.startsWith("{") && content.endsWith("}")) return true;
+  if (content.includes('"type":"presence"')) return true;
+  return false;
 }
 
 // --- Main component ---
@@ -90,53 +100,57 @@ export function NoteList({
   following,
   langFilter = "both",
 }) {
-  const [notes, setNotes] = useState([]);
-  const [myNotes, setMyNotes] = useState([]);      // user's own posts, unfiltered
+  const [networkNotes, setNetworkNotes] = useState([]);
+  const [ownNotes, setOwnNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const { ensureProfiles } = useProfile();
   const { account } = useAccount();
 
   const loadNotes = async () => {
     setLoading(true);
-    const authors = feedMode === "following" ? [...following] : null;
 
-    // Always fetch the user's own recent notes separately,
-    // so they appear regardless of language filter or network volume.
-    const [networkEvents, ownEvents] = await Promise.all([
-      fetchRecentNotes(100, authors),
-      account?.publicKey
-        ? fetchRecentNotes(20, [account.publicKey])
-        : Promise.resolve([]),
-    ]);
+    try {
+      if (feedMode === "following") {
+        // Following feed: just fetch network notes from followed accounts
+        // (own posts only appear if you follow yourself, matching X/Bluesky behavior)
+        const authors = [...following];
+        const fetched = await fetchRecentNotes(100, authors.length ? authors : null);
+        const filtered = fetched.filter(
+          (e) => !isJunkNote(e) && isAllowedScript(e.content, langFilter)
+        );
+        setNetworkNotes(filtered.slice(0, 30));
+        setOwnNotes([]);
+      } else {
+        // Global feed: fetch network notes AND own notes separately
+        const [fetched, own] = await Promise.all([
+          fetchRecentNotes(100),
+          account?.publicKey
+            ? fetchRecentNotes(30, [account.publicKey])
+            : Promise.resolve([]),
+        ]);
 
-    const filtered = networkEvents.filter((event) => {
-      const content = (event.content || "").trim();
+        // Filter network notes
+        const filtered = fetched.filter(
+          (e) => !isJunkNote(e) && isAllowedScript(e.content, langFilter)
+        );
 
-      if (!content) return false;
-      if (isTooShort(content)) return false;
-      if (isHexDump(content)) return false;
-      if (isRelayNoise(content)) return false;
-      if (isSpam(content)) return false;
-      if (content.startsWith("{") && content.endsWith("}")) return false;
-      if (content.includes('"type":"presence"')) return false;
+        // Own notes are NEVER filtered — always show what you wrote
+        const cleanOwn = own.filter((e) => !isJunkNote(e));
 
-      return isAllowedScript(content, langFilter);
-    });
+        setNetworkNotes(filtered.slice(0, 30));
+        setOwnNotes(cleanOwn);
+      }
 
-    // In "following" mode, only keep own notes if they're part of the network set
-    // (otherwise "following" feed would always include your own posts even if you
-    // don't follow yourself)
-    const ownFiltered = feedMode === "following" ? [] : ownEvents;
-
-    setNotes(filtered.slice(0, 30));
-    setMyNotes(ownFiltered);
-    setLoading(false);
-
-    const allPubkeys = [
-      ...filtered.slice(0, 30).map((e) => e.pubkey),
-      ...ownFiltered.map((e) => e.pubkey),
-    ];
-    ensureProfiles(allPubkeys);
+      const allPubkeys = [
+        ...ownNotes.map((e) => e.pubkey),
+        ...networkNotes.map((e) => e.pubkey),
+      ];
+      if (allPubkeys.length > 0) ensureProfiles(allPubkeys);
+    } catch (err) {
+      console.error("Failed to load notes:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -145,23 +159,21 @@ export function NoteList({
   }, [refreshTrigger, feedMode, following, langFilter, account?.publicKey]);
 
   // Merge: optimistic new notes → own notes → network notes
-  // (Dedupe by ID, preserving the order above)
+  // Dedupe by ID, preserving order (newest first within each group)
   const seen = new Set();
   const merged = [];
-  for (const n of [...newNotes, ...myNotes, ...notes]) {
+  for (const n of [...newNotes, ...ownNotes, ...networkNotes]) {
     if (!seen.has(n.id)) {
       seen.add(n.id);
       merged.push(n);
     }
   }
 
-  const uniqueNotes = merged;
-
-  if (loading && uniqueNotes.length === 0) {
+  if (loading && merged.length === 0) {
     return <div className="p-8 text-center text-muted">লোড হচ্ছে...</div>;
   }
 
-  if (uniqueNotes.length === 0) {
+  if (merged.length === 0) {
     return (
       <div className="p-8 text-center text-muted">
         {feedMode === "following"
@@ -175,7 +187,7 @@ export function NoteList({
 
   return (
     <div>
-      {uniqueNotes.map((event) => (
+      {merged.map((event) => (
         <NoteCard key={event.id} event={event} />
       ))}
     </div>

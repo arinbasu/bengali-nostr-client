@@ -29,6 +29,11 @@ const relayPool = new Map();
 const repliesCache = new Map();
 const parentEventCache = new Map();
 
+// How long a connection can sit idle before we force a reconnect.
+// Mobile Safari kills idle WebSockets in 20-30s, so we do it ourselves
+// before Safari can, avoiding "silent dead socket" failures.
+const RELAY_MAX_IDLE_MS = 20 * 1000;
+
 // =========================================================================
 // PERSISTENT CONNECTION HELPERS
 // =========================================================================
@@ -37,12 +42,21 @@ async function getRelay(url) {
   const existing = relayPool.get(url);
 
   if (existing) {
-    if (existing.connected) return existing;
+    const idleMs = Date.now() - (existing._balakaLastUsed || 0);
+
+    // Reuse only if the socket is alive AND was used recently
+    if (existing.connected && idleMs < RELAY_MAX_IDLE_MS) {
+      existing._balakaLastUsed = Date.now();
+      return existing;
+    }
+
+    // Otherwise: force-close and reconnect
     try { existing.close(); } catch {}
     relayPool.delete(url);
   }
 
   const relay = await Relay.connect(url);
+  relay._balakaLastUsed = Date.now();
   relayPool.set(url, relay);
 
   relay.onclose = () => {
@@ -65,6 +79,11 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
       if (closed) return;
       closed = true;
       try { sub?.close(); } catch {}
+
+      // Update last-used timestamp so this connection isn't considered idle
+      const relay = relayPool.get(relayUrl);
+      if (relay) relay._balakaLastUsed = Date.now();
+
       events.sort((a, b) => b.created_at - a.created_at);
       resolve(events);
     };
@@ -87,9 +106,25 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
       setTimeout(close, timeoutMs);
     } catch (err) {
       console.warn(`Relay ${relayUrl} failed:`, err?.message || err);
+      // Remove the failed relay so we don't reuse it
+      relayPool.delete(relayUrl);
       close();
     }
   });
+}
+
+// Force-close all pooled relay connections.
+// Call this on page unload or when you want a clean slate.
+export function closeAllRelays() {
+  for (const [, relay] of relayPool) {
+    try { relay.close(); } catch {}
+  }
+  relayPool.clear();
+}
+
+// Diagnostic: how many relays are currently pooled
+export function getRelayCount() {
+  return relayPool.size;
 }
 
 // =========================================================================
@@ -197,7 +232,6 @@ export async function fetchProfiles(pubkeys, timeoutMs = 10000) {
   return profileMap;
 }
 
-
 export async function fetchEventById(eventId, relayHints = [], timeoutMs = 4000) {
   if (!eventId) return null;
 
@@ -220,7 +254,7 @@ export async function fetchParentEvent(eventId, relayHints = [], timeoutMs = 300
   return ev;
 }
 
-export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 4000) {
+export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 8000) {
   const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
 
   const filter = {
@@ -246,18 +280,45 @@ export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 4000) {
 }
 
 // Search notes with a specific hashtag using NIP-12 `t` tag filtering
-export async function searchByHashtag(tag, limit = 50, timeoutMs = 4000) {
+export async function searchByHashtag(tag, limit = 50, timeoutMs = 8000) {
   const cleanTag = tag.toLowerCase().replace(/^#/, "");
-  const filter = { kinds: [1], "#t": [cleanTag] };
 
-  const results = await Promise.all(
-    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
+  // Query relays by #t tag (fast, indexed)
+  const tagFilter = { kinds: [1], "#t": [cleanTag] };
+  const tagResults = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, tagFilter, timeoutMs))
+  );
+
+  // Also fetch recent notes and filter by content (fallback for
+  // older posts that were published before hashtag extraction existed)
+  const recentFilter = { kinds: [1] };
+  const recentResults = await Promise.all(
+    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, recentFilter, timeoutMs))
   );
 
   const merged = new Map();
-  for (const relayEvents of results) {
+
+  // Tag-tagged results take priority
+  for (const relayEvents of tagResults) {
     for (const ev of relayEvents) {
       if (!merged.has(ev.id)) merged.set(ev.id, ev);
+    }
+  }
+
+  // Add content-matching results from recent notes
+  const pattern = `#${cleanTag}`;
+  for (const relayEvents of recentResults) {
+    for (const ev of relayEvents) {
+      if (merged.has(ev.id)) continue;
+
+      const content = (ev.content || "").toLowerCase();
+      const tTags = ev.tags
+        .filter((t) => t[0] === "t")
+        .map((t) => (t[1] || "").toLowerCase());
+
+      if (content.includes(pattern) || tTags.includes(cleanTag)) {
+        merged.set(ev.id, ev);
+      }
     }
   }
 
@@ -267,7 +328,7 @@ export async function searchByHashtag(tag, limit = 50, timeoutMs = 4000) {
 }
 
 // Full-text keyword search via NIP-50 compatible relays
-export async function searchNotes(keyword, limit = 50, timeoutMs = 4000) {
+export async function searchNotes(keyword, limit = 50, timeoutMs = 8000) {
   if (!keyword || !keyword.trim()) return [];
 
   const filter = { kinds: [1], search: keyword.trim() };
@@ -511,7 +572,7 @@ export async function publishReply(parentEvent, content, secretKey, extraTags = 
   return event;
 }
 
-export async function fetchReplies(noteId, timeoutMs = 4000) {
+export async function fetchReplies(noteId, timeoutMs = 8000) {
   console.log("🔍 fetchReplies called for:", noteId);
 
   if (repliesCache.has(noteId)) {
@@ -521,13 +582,11 @@ export async function fetchReplies(noteId, timeoutMs = 4000) {
   }
 
   const filter = { kinds: [1], "#e": [noteId] };
-  console.log("📤 Filter:", JSON.stringify(filter));
 
   const results = await Promise.all(
     DEFAULT_RELAYS.map(async (url) => {
       try {
         const events = await fetchFromRelay(url, filter, timeoutMs);
-        console.log(`✅ ${url} returned ${events.length} events`);
         return events;
       } catch (err) {
         console.log(`❌ ${url} failed:`, err?.message || err);
