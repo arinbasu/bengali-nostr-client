@@ -44,13 +44,11 @@ async function getRelay(url) {
   if (existing) {
     const idleMs = Date.now() - (existing._balakaLastUsed || 0);
 
-    // Reuse only if the socket is alive AND was used recently
     if (existing.connected && idleMs < RELAY_MAX_IDLE_MS) {
       existing._balakaLastUsed = Date.now();
       return existing;
     }
 
-    // Otherwise: force-close and reconnect
     try { existing.close(); } catch {}
     relayPool.delete(url);
   }
@@ -68,7 +66,7 @@ async function getRelay(url) {
   return relay;
 }
 
-function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
+function fetchFromRelay(relayUrl, filter, timeoutMs = 8000) {
   return new Promise(async (resolve) => {
     const events = [];
     const seen = new Set();
@@ -80,7 +78,6 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
       closed = true;
       try { sub?.close(); } catch {}
 
-      // Update last-used timestamp so this connection isn't considered idle
       const relay = relayPool.get(relayUrl);
       if (relay) relay._balakaLastUsed = Date.now();
 
@@ -106,7 +103,6 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
       setTimeout(close, timeoutMs);
     } catch (err) {
       console.warn(`Relay ${relayUrl} failed:`, err?.message || err);
-      // Remove the failed relay so we don't reuse it
       relayPool.delete(relayUrl);
       close();
     }
@@ -114,7 +110,6 @@ function fetchFromRelay(relayUrl, filter, timeoutMs = 4000) {
 }
 
 // Force-close all pooled relay connections.
-// Call this on page unload or when you want a clean slate.
 export function closeAllRelays() {
   for (const [, relay] of relayPool) {
     try { relay.close(); } catch {}
@@ -158,26 +153,60 @@ export function getNpub() {
 // FETCHING
 // =========================================================================
 
+// Streaming feed — resolves as soon as 2 relays respond with data,
+// or all relays respond, or the timeout fires. Prevents "wait for the
+// slowest relay" delays.
 export async function fetchRecentNotes(limit = 30, authors = null, timeoutMs = 10000) {
   const filter = { kinds: [1] };
   if (authors && authors.length > 0) {
     filter.authors = authors;
   }
 
-  const results = await Promise.all(
-    DEFAULT_RELAYS.map((url) => fetchFromRelay(url, filter, timeoutMs))
-  );
+  return new Promise((resolve) => {
+    const merged = new Map();
+    let responded = 0;
+    let resolved = false;
+    const total = DEFAULT_RELAYS.length;
 
-  const merged = new Map();
-  for (const relayEvents of results) {
-    for (const ev of relayEvents) {
-      if (!merged.has(ev.id)) merged.set(ev.id, ev);
-    }
-  }
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      const all = Array.from(merged.values());
+      all.sort((a, b) => b.created_at - a.created_at);
+      resolve(all.slice(0, limit));
+    };
 
-  const all = Array.from(merged.values());
-  all.sort((a, b) => b.created_at - a.created_at);
-  return all.slice(0, limit);
+    const hardTimeout = setTimeout(finish, timeoutMs);
+
+    DEFAULT_RELAYS.forEach(async (url) => {
+      try {
+        const events = await fetchFromRelay(url, filter, timeoutMs);
+        for (const ev of events) {
+          if (!merged.has(ev.id)) merged.set(ev.id, ev);
+        }
+        responded++;
+
+        // Resolve early if at least 2 relays have responded AND we have data
+        if (!resolved && responded >= 2 && merged.size > 0) {
+          clearTimeout(hardTimeout);
+          finish();
+          return;
+        }
+
+        // If all relays have responded, finish immediately
+        if (!resolved && responded === total) {
+          clearTimeout(hardTimeout);
+          finish();
+        }
+      } catch {
+        responded++;
+        if (responded === total && !resolved) {
+          clearTimeout(hardTimeout);
+          finish();
+        }
+      }
+    });
+  });
 }
 
 export async function fetchContactList(pubkey, timeoutMs = 10000) {
@@ -283,14 +312,11 @@ export async function fetchNotifications(pubkey, limit = 50, timeoutMs = 8000) {
 export async function searchByHashtag(tag, limit = 50, timeoutMs = 8000) {
   const cleanTag = tag.toLowerCase().replace(/^#/, "");
 
-  // Query relays by #t tag (fast, indexed)
   const tagFilter = { kinds: [1], "#t": [cleanTag] };
   const tagResults = await Promise.all(
     DEFAULT_RELAYS.map((url) => fetchFromRelay(url, tagFilter, timeoutMs))
   );
 
-  // Also fetch recent notes and filter by content (fallback for
-  // older posts that were published before hashtag extraction existed)
   const recentFilter = { kinds: [1] };
   const recentResults = await Promise.all(
     DEFAULT_RELAYS.map((url) => fetchFromRelay(url, recentFilter, timeoutMs))
@@ -298,14 +324,12 @@ export async function searchByHashtag(tag, limit = 50, timeoutMs = 8000) {
 
   const merged = new Map();
 
-  // Tag-tagged results take priority
   for (const relayEvents of tagResults) {
     for (const ev of relayEvents) {
       if (!merged.has(ev.id)) merged.set(ev.id, ev);
     }
   }
 
-  // Add content-matching results from recent notes
   const pattern = `#${cleanTag}`;
   for (const relayEvents of recentResults) {
     for (const ev of relayEvents) {
