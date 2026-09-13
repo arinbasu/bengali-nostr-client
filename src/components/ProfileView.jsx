@@ -6,6 +6,9 @@ import { useProfile } from "../contexts/useProfile";
 import { NoteCard } from "./NoteCard";
 import { EditProfileModal } from "./EditProfileModal";
 
+const NOTES_CACHE_KEY = "balaka_my_notes";
+const MAX_CACHED_NOTES = 30;
+
 export function ProfileView() {
   const { account, logout } = useAccount();
   const { profiles, forceRefreshProfile } = useProfile();
@@ -16,8 +19,6 @@ export function ProfileView() {
 
   const profile = account?.publicKey ? profiles.get(account.publicKey) : null;
 
-  // Force-refresh own profile on every mount.
-  // Bypasses cache entirely — relays are the source of truth.
   useEffect(() => {
     if (!account?.publicKey) return;
     let cancelled = false;
@@ -25,15 +26,63 @@ export function ProfileView() {
     (async () => {
       setLoading(true);
 
-      // 1. Force-fetch fresh profile from relays (ignores cache)
-      await forceRefreshProfile(account.publicKey);
+      // ---- 1. Read cache ----
+      let cached = [];
+      try {
+        const raw = localStorage.getItem(NOTES_CACHE_KEY);
+        console.log("Cache raw:", raw ? raw.length + " chars" : "null");
+        cached = JSON.parse(raw || "[]");
+        cached = cached.filter((n) => n.pubkey === account.publicKey);
+        console.log("Cache loaded:", cached.length, "notes");
+      } catch (err) {
+        console.error("Failed to load cache:", err);
+      }
 
-      // 2. Fetch own recent notes
-      const fetched = await fetchRecentNotes(50, [account.publicKey]);
+      // Show cached notes immediately
+      if (!cancelled && cached.length > 0) {
+        setNotes(cached);
+        setLoading(false);
+      }
+
+      // ---- 2. Fetch fresh profile + notes in parallel ----
+      const [, fetched] = await Promise.all([
+        forceRefreshProfile(account.publicKey),
+        fetchRecentNotes(50, [account.publicKey]),
+      ]);
+
       if (cancelled) return;
 
-      setNotes(fetched);
+      // ---- 3. Merge, dedupe, sort ----
+      const seen = new Set();
+      const merged = [];
+      for (const n of [...fetched, ...cached]) {
+        if (!seen.has(n.id)) {
+          seen.add(n.id);
+          merged.push(n);
+        }
+      }
+      merged.sort((a, b) => b.created_at - a.created_at);
+
+      setNotes(merged);
       setLoading(false);
+
+      // ---- 4. Save a slim version to cache ----
+      if (merged.length > 0) {
+        try {
+          const slim = merged.slice(0, MAX_CACHED_NOTES).map((n) => ({
+            id: n.id,
+            pubkey: n.pubkey,
+            created_at: n.created_at,
+            kind: n.kind,
+            content: n.content,
+            tags: (n.tags || []).slice(0, 10),
+          }));
+          localStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(slim));
+          console.log("Saved", slim.length, "notes to cache");
+        } catch (err) {
+          console.error("Failed to cache notes:", err);
+        }
+      }
     })();
 
     return () => {
@@ -64,7 +113,6 @@ export function ProfileView() {
               alt=""
               className="w-16 h-16 rounded-full object-cover"
               onError={(e) => {
-                // Fall back to gradient if the image URL fails
                 e.target.style.display = "none";
                 e.target.nextSibling.style.display = "flex";
               }}
