@@ -1,12 +1,42 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Akshar } from "akshar-typing";
-import { publishNote } from "../lib/nostr";
+import { publishNoteWithSigner } from "../lib/nostr";
 import { uploadImage } from "../lib/media";
 import { useAccount } from "../contexts/useAccount";
 
 const MAX_LENGTH = 5000;
+const MIN_HEIGHT = 90;
+const MAX_HEIGHT = 320;
 
-// Extract hashtags from content: #bengali, #বাংলা, etc.
+// Auto-growing textarea — grows with content up to a max height,
+// then scrolls. Works inside Akshar's renderComponent.
+function AutoGrowTextarea({ placeholder, className, ...props }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height =
+      Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT) + "px";
+  }, [props.value]);
+
+  return (
+    <textarea
+      ref={ref}
+      placeholder={placeholder}
+      className={className}
+      style={{
+        minHeight: `${MIN_HEIGHT}px`,
+        maxHeight: `${MAX_HEIGHT}px`,
+        overflowY: "auto",
+        resize: "none",
+      }}
+      {...props}
+    />
+  );
+}
+
 function extractHashtags(text) {
   const matches = text.match(/#[\u0980-\u09FF\w]+/g) || [];
   return [...new Set(matches.map((t) => t.slice(1).toLowerCase()))];
@@ -30,7 +60,7 @@ export function NoteComposer({ onPublished }) {
 
   const handlePublish = async () => {
     if (!content.trim() && !file) return;
-    if (!account?.secretKey) {
+    if (!account?.signer) {
       setStatus("error");
       return;
     }
@@ -39,18 +69,20 @@ export function NoteComposer({ onPublished }) {
       setStatus("uploading");
       let tags = [];
 
-      // Extract hashtags and add as NIP-12 `t` tags
       const hashtags = extractHashtags(content);
       hashtags.forEach((tag) => tags.push(["t", tag]));
 
-      // Upload image if present
       if (file) {
-        const { url, mime } = await uploadImage(file, account.secretKey);
+        const { url, mime } = await uploadImage(file, account.signer);
         tags.push(["imeta", `url ${url}`, `m ${mime}`]);
       }
 
       setStatus("publishing");
-      const publishedEvent = await publishNote(content, account.secretKey, tags);
+      const publishedEvent = await publishNoteWithSigner(
+        content,
+        account.signer,
+        tags
+      );
 
       setStatus("done");
       setContent("");
@@ -64,11 +96,10 @@ export function NoteComposer({ onPublished }) {
     }
   };
 
-  const remaining = MAX_LENGTH - content.length;
-  const isNearLimit = remaining < 200;
+  const isNearLimit = MAX_LENGTH - content.length < 200;
 
   const textareaClassName =
-    "w-full text-lg p-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none";
+    "w-full text-lg p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
     <div className="bg-white p-4 border-b border-gray-200">
@@ -81,20 +112,18 @@ export function NoteComposer({ onPublished }) {
               if (text.length <= MAX_LENGTH) setContent(text);
             }}
             maxOptions={5}
-            offsetY={-4}
+            offsetY={-40}
             containerClassName="relative z-50"
             renderComponent={(props) => (
-              <textarea
+              <AutoGrowTextarea
                 {...props}
-                style={{ height: "120px" }}
                 placeholder="কিছু লিখুন... (ইংরেজি অক্ষরে টাইপ করুন)"
                 className={textareaClassName}
               />
             )}
           />
         ) : (
-          <textarea
-            style={{ height: "120px" }}
+          <AutoGrowTextarea
             value={content}
             maxLength={MAX_LENGTH}
             onChange={(e) => setContent(e.target.value)}
@@ -135,7 +164,6 @@ export function NoteComposer({ onPublished }) {
             <span className="text-2xl">📷</span>
           </label>
 
-          {/* ← THE TOGGLE */}
           <button
             onClick={() => setBengaliOn((v) => !v)}
             className={`text-xs px-2 py-1 rounded-full border transition ${

@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { nip19 } from "nostr-tools";
-import { publishReaction, publishRepost, fetchReplies } from "../lib/nostr";
+import {
+  publishReactionWithSigner,
+  publishRepostWithSigner,
+  fetchReplies,
+} from "../lib/nostr";
 import { useAccount } from "../contexts/useAccount";
 import { useProfile, getDisplayName } from "../contexts/useProfile";
 import { NoteContent } from "./NoteContent";
@@ -45,14 +49,10 @@ function extractImetaUrls(tag) {
 }
 
 export function NoteCard({ event }) {
-  // --- Heart (like) state ---
   const [heartCount, setHeartCount] = useState(0);
   const [hasHeart, setHasHeart] = useState(false);
-
-  // --- Thumbs up state ---
   const [thumbCount, setThumbCount] = useState(0);
   const [hasThumb, setHasThumb] = useState(false);
-
   const [hasReposted, setHasReposted] = useState(false);
   const [textRevealed, setTextRevealed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -89,18 +89,8 @@ export function NoteCard({ event }) {
       ? truncateContent(event.content, TRUNCATE_LENGTH)
       : event.content;
 
-  // Lazily fetch reply count
   useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      fetchReplies(event.id).then((replies) => {
-        if (!cancelled) setReplyCount(replies.length);
-      });
-    }, 800);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    return;
   }, [event.id]);
 
   const handleFollowToggle = () => {
@@ -108,15 +98,13 @@ export function NoteCard({ event }) {
     else follow(event.pubkey);
   };
 
-  // Generic reaction handler
   const handleReaction = async (type) => {
-    if (!account?.secretKey) return;
+    if (!account?.signer) return;          // ← signer, not secretKey
 
     const isHeart = type === "heart";
     const alreadyReacted = isHeart ? hasHeart : hasThumb;
     if (alreadyReacted) return;
 
-    // Optimistic update
     if (isHeart) {
       setHasHeart(true);
       setHeartCount((prev) => prev + 1);
@@ -127,10 +115,14 @@ export function NoteCard({ event }) {
 
     try {
       const content = isHeart ? "+" : "👍";
-      await publishReaction(event.id, event.pubkey, account.secretKey, content);
+      await publishReactionWithSigner(
+        event.id,
+        event.pubkey,
+        account.signer,
+        content
+      );
     } catch (err) {
       console.error(`Failed to publish ${type} reaction`, err);
-      // Rollback
       if (isHeart) {
         setHasHeart(false);
         setHeartCount((prev) => prev - 1);
@@ -142,10 +134,10 @@ export function NoteCard({ event }) {
   };
 
   const handleRepost = async () => {
-    if (hasReposted || !account?.secretKey) return;
+    if (hasReposted || !account?.signer) return;   // ← signer, not secretKey
     setHasReposted(true);
     try {
-      await publishRepost(event, account.secretKey);
+      await publishRepostWithSigner(event, account.signer);
     } catch (err) {
       console.error("Failed to repost", err);
       setHasReposted(false);
@@ -245,7 +237,6 @@ export function NoteCard({ event }) {
             </>
           )}
 
-          {/* Action row */}
           <div className="flex items-center gap-6 mt-3 text-gray-500">
             <button
               onClick={() => setShowThread((v) => !v)}
@@ -257,7 +248,6 @@ export function NoteCard({ event }) {
               <span className="text-sm">উত্তর</span>
             </button>
 
-            {/* Heart (like) */}
             <button
               onClick={() => handleReaction("heart")}
               className={`flex items-center gap-1.5 transition ${
@@ -270,7 +260,6 @@ export function NoteCard({ event }) {
               </span>
             </button>
 
-            {/* Thumbs up */}
             <button
               onClick={() => handleReaction("thumb")}
               className={`flex items-center gap-1.5 transition ${
@@ -296,7 +285,6 @@ export function NoteCard({ event }) {
             </button>
           </div>
 
-          {/* See all replies */}
           {replyCount > 0 && !showThread && (
             <button
               onClick={() => setShowThread(true)}

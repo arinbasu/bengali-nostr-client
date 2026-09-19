@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { publishProfile } from "../lib/nostr";
+import { publishProfileWithSigner } from "../lib/nostr";
 import { uploadImage } from "../lib/media";
 import { useAccount } from "../contexts/useAccount";
 import { CraneIcon } from "./CraneIcon";
@@ -16,20 +16,31 @@ export function ProfileSetupPage({ onComplete }) {
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Blossom upload requires a raw secret key.
+    // NIP-07/NIP-46 users can add a picture URL manually instead.
+    if (!account?.signer) {
+      setError("ছবি আপলোড করতে লগ ইন করুন");
+      return;
+    }
+
     setUploading(true);
+    setError("");
     try {
-      const { url } = await uploadImage(file, account.secretKey);
+      const { url } = await uploadImage(file, account.signer);
       setPicture(url);
     } catch (err) {
       console.error(err);
-      setError("ছবি আপলোড ব্যর্থ হয়েছে");
+      setError("ছবি আপলোড হয়নি :-");
     } finally {
       setUploading(false);
     }
   };
 
   const handleSave = async () => {
-    if (!account?.secretKey) return;
+    if (!account?.signer) return;              // ← fixed
+    if (!displayName.trim()) return;
+
     setSaving(true);
     setError("");
     try {
@@ -39,7 +50,7 @@ export function ProfileSetupPage({ onComplete }) {
         about: about.trim(),
         picture: picture.trim(),
       };
-      await publishProfile(metadata, account.secretKey);
+      await publishProfileWithSigner(metadata, account.signer);
       onComplete();
     } catch (err) {
       console.error(err);
@@ -69,7 +80,7 @@ export function ProfileSetupPage({ onComplete }) {
           </h1>
           <p className="text-sm text-muted mb-8 leading-relaxed">
             আপনার নাম ও ছবি যোগ করলে অন্য ব্যবহারকারীরা আপনাকে সহজে চিনতে
-            পারবেন। চাইলে এই ধাপটি এড়িয়ে যেতে পারেন।
+            পারবেন। না চাইলে এই ধাপটি এড়িয়ে যেতে পারেন।
           </p>
 
           {/* Avatar */}
@@ -108,7 +119,7 @@ export function ProfileSetupPage({ onComplete }) {
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="যেমন: অরিন্দম বসু"
+              placeholder="নাম পদবী/উপাধী"
               className="w-full px-3 py-3 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -116,13 +127,13 @@ export function ProfileSetupPage({ onComplete }) {
           {/* About */}
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              নিজের সম্পর্কে (ঐচ্ছিক)
+              নিজের সম্পর্কে কিছু লিখুন ইচ্ছা হলে 
             </label>
             <textarea
               value={about}
               onChange={(e) => setAbout(e.target.value)}
               rows={3}
-              placeholder="আপনার সম্পর্কে দুটি কথা..."
+              placeholder="আপনার সম্পর্কে যা লিখতে চান ..."
               className="w-full px-3 py-3 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
           </div>

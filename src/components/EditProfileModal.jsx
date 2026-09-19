@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { publishProfile } from "../lib/nostr";
+import { publishProfileWithSigner } from "../lib/nostr";
 import { uploadImage } from "../lib/media";
 import { useAccount } from "../contexts/useAccount";
 import { useProfile } from "../contexts/useProfile";
@@ -30,7 +30,7 @@ export function EditProfileModal({ isOpen, onClose }) {
     setUploading(true);
     setError("");
     try {
-      const { url } = await uploadImage(file, account.secretKey);
+      const { url } = await uploadImage(file, account.signer);
       setPicture(url);
     } catch (err) {
       console.error(err);
@@ -41,7 +41,7 @@ export function EditProfileModal({ isOpen, onClose }) {
   };
 
   const handleSave = async () => {
-    if (!account?.secretKey) return;
+    if (!account?.signer) return;
     if (!displayName.trim()) {
       setError("নাম আবশ্যক");
       return;
@@ -58,7 +58,7 @@ export function EditProfileModal({ isOpen, onClose }) {
         picture: picture.trim(),
       };
 
-      await publishProfile(metadata, account.secretKey);
+      await publishProfileWithSigner(metadata, account.signer);
       updateProfileCache(account.publicKey, metadata);
       onClose();
     } catch (err) {
@@ -125,7 +125,7 @@ export function EditProfileModal({ isOpen, onClose }) {
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="যেমন: অরিন্দম বসু"
+              placeholder="নাম পদবি / উপাধী "
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -138,7 +138,7 @@ export function EditProfileModal({ isOpen, onClose }) {
               value={about}
               onChange={(e) => setAbout(e.target.value)}
               rows={3}
-              placeholder="আপনার সম্পর্কে দুটি কথা..."
+              placeholder="আপনার সম্পর্কে কিছু লিখুন..."
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
             />
           </div>

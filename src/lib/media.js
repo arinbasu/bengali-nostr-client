@@ -1,7 +1,8 @@
-import { finalizeEvent } from "nostr-tools";
+// src/lib/media.js
+// Blossom uploads using any Nostr signer (LocalSigner, Nip07Signer, Nip46Signer).
+// The signer signs a kind-24242 auth event; the raw private key never leaves it.
 
 // Free Blossom servers — tried in order until one succeeds.
-// These are known-good public servers as of late 2025.
 const BLOSSOM_SERVERS = [
   "https://blossom.primal.net",
   "https://cdn.nostr.build",
@@ -9,7 +10,7 @@ const BLOSSOM_SERVERS = [
   "https://cdn.satellite.earth",
 ];
 
-// Calculate SHA-256 hash of a file (required by Blossom protocol)
+// SHA-256 of a file, as lowercase hex
 async function sha256Hex(file) {
   const buffer = await file.arrayBuffer();
   const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
@@ -17,28 +18,26 @@ async function sha256Hex(file) {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// Build a Blossom auth event (kind 24242)
-function buildBlossomAuth(secretKey, sha256, mimeType) {
-  return finalizeEvent(
-    {
-      kind: 24242,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ["t", "upload"],
-        ["x", sha256],
-        ["m", mimeType],
-        ["expiration", String(Math.floor(Date.now() / 1000) + 300)],
-      ],
-      content: "Upload via বলাকা",
-    },
-    secretKey
-  );
+// Build the kind-24242 auth event template (BUD-01)
+function buildBlossomAuthTemplate(sha256, mimeType) {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    kind: 24242,
+    created_at: now,
+    tags: [
+      ["t", "upload"],
+      ["x", sha256],
+      ["m", mimeType],
+      ["expiration", String(now + 300)],
+    ],
+    content: "Upload via বলাকা",
+  };
 }
 
-// Encode the signed event as base64 for the Authorization header
+// Base64-encode the signed event for the Authorization header.
+// btoa handles only Latin-1, so encode UTF-8 first.
 function encodeAuthHeader(signedEvent) {
   const json = JSON.stringify(signedEvent);
-  // btoa handles only Latin-1; encode UTF-8 first
   const utf8 = new TextEncoder().encode(json);
   const binary = Array.from(utf8).map((b) => String.fromCharCode(b)).join("");
   return `Nostr ${btoa(binary)}`;
@@ -46,23 +45,25 @@ function encodeAuthHeader(signedEvent) {
 
 /**
  * Upload a file to the first Blossom server that accepts it.
- * Returns { url, mime } on success, throws on total failure.
+ * @param {File} file
+ * @param {object} signer - Any signer with a .signEvent(template) method
+ * @returns {Promise<{ url: string, mime: string }>}
  */
-export async function uploadImage(file, secretKey) {
-  if (!secretKey) {
-    throw new Error("No secret key — cannot sign upload");
+export async function uploadImage(file, signer) {
+  if (!signer) {
+    throw new Error("No signer — cannot upload");
   }
 
   const sha256 = await sha256Hex(file);
-  const authEvent = buildBlossomAuth(secretKey, sha256, file.type);
-  const authHeader = encodeAuthHeader(authEvent);
+  const template = buildBlossomAuthTemplate(sha256, file.type);
+  const signedEvent = await signer.signEvent(template);
+  const authHeader = encodeAuthHeader(signedEvent);
 
   const errors = [];
 
   for (const server of BLOSSOM_SERVERS) {
     try {
-      const url = `${server}/upload`;
-      const response = await fetch(url, {
+      const response = await fetch(`${server}/upload`, {
         method: "PUT",
         headers: {
           Authorization: authHeader,
@@ -78,7 +79,6 @@ export async function uploadImage(file, secretKey) {
       }
 
       const data = await response.json();
-      // Blossom returns { url, sha256, size, type, uploaded }
       const blobUrl = data.url || `${server}/${sha256}`;
       console.log(`Uploaded to ${server}:`, blobUrl);
       return { url: blobUrl, mime: file.type };

@@ -1,9 +1,38 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Akshar } from "akshar-typing";
-import { publishReply } from "../lib/nostr";
+import { publishReplyWithSigner } from "../lib/nostr";
 import { useAccount } from "../contexts/useAccount";
 
 const MAX_LENGTH = 5000;
+const MIN_HEIGHT = 60;
+const MAX_HEIGHT = 240;
+
+function AutoGrowTextarea({ placeholder, className, ...props }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height =
+      Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT) + "px";
+  }, [props.value]);
+
+  return (
+    <textarea
+      ref={ref}
+      placeholder={placeholder}
+      className={className}
+      style={{
+        minHeight: `${MIN_HEIGHT}px`,
+        maxHeight: `${MAX_HEIGHT}px`,
+        overflowY: "auto",
+        resize: "none",
+      }}
+      {...props}
+    />
+  );
+}
 
 export function ReplyComposer({ parentEvent, onPublished, onCancel }) {
   const [content, setContent] = useState("");
@@ -11,13 +40,13 @@ export function ReplyComposer({ parentEvent, onPublished, onCancel }) {
   const { account } = useAccount();
 
   const handleSubmit = async () => {
-    if (!content.trim() || !account?.secretKey) return;
+    if (!content.trim() || !account?.signer) return;
     try {
       setStatus("publishing");
-      const publishedEvent = await publishReply(
+      const publishedEvent = await publishReplyWithSigner(
         parentEvent,
         content,
-        account.secretKey
+        account.signer
       );
       setStatus("done");
       setContent("");
@@ -29,8 +58,10 @@ export function ReplyComposer({ parentEvent, onPublished, onCancel }) {
     }
   };
 
-  const remaining = MAX_LENGTH - content.length;
-  const isNearLimit = remaining < 200;
+  const isNearLimit = MAX_LENGTH - content.length < 200;
+
+  const textareaClassName =
+    "w-full p-2 text-base bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
   return (
     <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
@@ -42,13 +73,13 @@ export function ReplyComposer({ parentEvent, onPublished, onCancel }) {
             if (text.length <= MAX_LENGTH) setContent(text);
           }}
           maxOptions={5}
+          offsetY={-40}
           containerClassName="relative z-50"
           renderComponent={(props) => (
-            <textarea
+            <AutoGrowTextarea
               {...props}
-              style={{ height: "90px" }}
               placeholder="উত্তর লিখুন..."
-              className="w-full p-2 text-base bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              className={textareaClassName}
             />
           )}
         />
