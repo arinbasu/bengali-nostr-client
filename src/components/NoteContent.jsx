@@ -8,7 +8,7 @@ const YT_REGEX = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)
 
 // Combined split: URLs, nostr:nevent refs, nostr:npub refs, nostr:nprofile refs
 const SPLIT_REGEX =
-  /((?:https?:\/\/[^\s]+)|(?:nostr:nevent1[a-z0-9]+)|(?:nostr:nprofile1[a-z0-9]+)|(?:nostr:npub1[a-z0-9]+))/gi;
+  /((?:https?:\/\/[^\s]+)|(?:nostr:nevent1[a-z0-9]+)|(?:nostr:nprofile1[a-z0-9]+)|(?:nostr:npub1[a-z0-9]+)|(?:@nprofile1[a-z0-9]+)|(?:@npub1[a-z0-9]+))/gi;
 
 function normalizeUrl(u) {
   try {
@@ -47,6 +47,15 @@ export function NoteContent({
         if (mentionMatch) {
           return <Mention key={i} npubId={mentionMatch[1]} />;
         }
+
+        // --- @npub1... / @nprofile1... mention (no nostr: prefix) ---
+        const atMentionMatch = part.match(
+          /^@((?:npub1|nprofile1)[a-z0-9]+)$/i
+        );
+        if (atMentionMatch) {
+          return <Mention key={i} npubId={atMentionMatch[1]} />;
+        }
+
 
         // --- Plain text ---
         if (!/^https?:\/\//.test(part)) {

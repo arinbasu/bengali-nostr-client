@@ -3,27 +3,37 @@ import { Akshar } from "akshar-typing";
 import { publishNoteWithSigner } from "../lib/nostr";
 import { uploadImage } from "../lib/media";
 import { useAccount } from "../contexts/useAccount";
+import { useProfile } from "../contexts/useProfile";
+import { useMentions } from "../hooks/useMentions";
+import { MentionDropdown } from "./MentionDropdown";
 
 const MAX_LENGTH = 5000;
 const MIN_HEIGHT = 90;
 const MAX_HEIGHT = 320;
 
-// Auto-growing textarea — grows with content up to a max height,
-// then scrolls. Works inside Akshar's renderComponent.
-function AutoGrowTextarea({ placeholder, className, ...props }) {
-  const ref = useRef(null);
+// Auto-growing textarea. No forwardRef — accepts `innerRef` as a
+// regular prop, which works in both React 18 and React 19 and avoids
+// interfering with Akshar's control over the textarea.
+function AutoGrowTextarea({ placeholder, className, innerRef, ...props }) {
+  const localRef = useRef(null);
 
   useEffect(() => {
-    const el = ref.current;
+    const el = localRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height =
       Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT) + "px";
   }, [props.value]);
 
+  const setRef = (node) => {
+    localRef.current = node;
+    if (typeof innerRef === "function") innerRef(node);
+    else if (innerRef) innerRef.current = node;
+  };
+
   return (
     <textarea
-      ref={ref}
+      ref={setRef}
       placeholder={placeholder}
       className={className}
       style={{
@@ -48,7 +58,28 @@ export function NoteComposer({ onPublished }) {
   const [preview, setPreview] = useState(null);
   const [status, setStatus] = useState("idle");
   const [bengaliOn, setBengaliOn] = useState(true);
-  const { account } = useAccount();
+  const [cursorPos, setCursorPos] = useState(0);
+
+  const { account, following } = useAccount();
+  const { profiles } = useProfile();
+  const textareaRef = useRef(null);
+
+  const mentions = useMentions({
+    text: content,
+    cursorPos,
+    following,
+    profiles,
+  });
+
+  const handleMentionSelect = (candidate) => {
+    const newCursor = mentions.insertMention(candidate, setContent);
+    setTimeout(() => {
+      if (textareaRef.current && newCursor != null) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newCursor, newCursor);
+      }
+    }, 0);
+  };
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -101,9 +132,56 @@ export function NoteComposer({ onPublished }) {
   const textareaClassName =
     "w-full text-lg p-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500";
 
+  // Chains Akshar's event handlers with ours so transliteration keeps
+  // working while we track cursor position for mention detection.
+  const renderTextarea = (props) => {
+    const {
+      onSelect: aksharOnSelect,
+      onKeyUp: aksharOnKeyUp,
+      onClick: aksharOnClick,
+      onKeyDown: aksharOnKeyDown,
+      ...rest
+    } = props;
+
+    return (
+      <AutoGrowTextarea
+        {...rest}
+        innerRef={textareaRef}
+        onSelect={(e) => {
+          setCursorPos(e.target.selectionStart);
+          aksharOnSelect?.(e);
+        }}
+        onKeyUp={(e) => {
+          setCursorPos(e.target.selectionStart);
+          aksharOnKeyUp?.(e);
+        }}
+        onClick={(e) => {
+          setCursorPos(e.target.selectionStart);
+          aksharOnClick?.(e);
+        }}
+        onKeyDown={(e) => {
+          // Mention handler runs first. If it consumes the event
+          // (Enter/Tab/Escape/arrows), stop so Akshar doesn't also react.
+          if (mentions.handleKeyDown(e, setContent)) return;
+          aksharOnKeyDown?.(e);
+        }}
+        placeholder="কিছু লিখুন... (ইংরেজি অক্ষরে টাইপ করুন)"
+        className={textareaClassName}
+      />
+    );
+  };
+
   return (
     <div className="bg-white p-4 border-b border-gray-200">
       <div className="relative z-50">
+        {mentions.isActive && (
+          <MentionDropdown
+            candidates={mentions.candidates}
+            activeIndex={mentions.activeIndex}
+            onSelect={handleMentionSelect}
+          />
+        )}
+
         {bengaliOn ? (
           <Akshar
             lang="bn"
@@ -114,19 +192,20 @@ export function NoteComposer({ onPublished }) {
             maxOptions={5}
             offsetY={-40}
             containerClassName="relative z-50"
-            renderComponent={(props) => (
-              <AutoGrowTextarea
-                {...props}
-                placeholder="কিছু লিখুন... (ইংরেজি অক্ষরে টাইপ করুন)"
-                className={textareaClassName}
-              />
-            )}
+            renderComponent={renderTextarea}
           />
         ) : (
           <AutoGrowTextarea
+            innerRef={textareaRef}
             value={content}
             maxLength={MAX_LENGTH}
             onChange={(e) => setContent(e.target.value)}
+            onSelect={(e) => setCursorPos(e.target.selectionStart)}
+            onKeyUp={(e) => setCursorPos(e.target.selectionStart)}
+            onClick={(e) => setCursorPos(e.target.selectionStart)}
+            onKeyDown={(e) => {
+              if (mentions.handleKeyDown(e, setContent)) return;
+            }}
             placeholder="Write in English..."
             className={textareaClassName}
           />

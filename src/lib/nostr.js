@@ -3,8 +3,19 @@ import { SimplePool } from "nostr-tools/pool";
 
 // Reduced to the two relays that actually work reliably.
 export const DEFAULT_RELAYS = [
-  "wss://relay.damus.io",
   "wss://nos.lol",
+  "wss://relay.nostr.band",
+  "wss://relay.primal.net",
+];
+
+export const PROFILE_RELAYS = [
+  "wss://relay.primal.net",
+  "wss://nos.lol",
+  "wss://relay.nostr.band",
+  "wss://nostr.wine",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.bg",
+  "wss://nostr.mom",
 ];
 
 // NIP-50-capable search relays
@@ -128,7 +139,7 @@ export async function fetchProfiles(pubkeys) {
   const unique = [...new Set(pubkeys)].filter(Boolean);
 
   try {
-    const events = await gatedQuery(DEFAULT_RELAYS, {
+    const events = await gatedQuery(PROFILE_RELAYS, {
       kinds: [0],
       authors: unique,
     });
