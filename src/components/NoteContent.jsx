@@ -1,14 +1,18 @@
 import { SensitiveContent } from "./SensitiveContent";
 import { EmbeddedNote } from "./EmbeddedNote";
 import { Mention } from "./Mention";
+import { useSearchContext } from "../contexts/SearchContext";
 
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif)(\?.*)?$/i;
-const YT_REGEX = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/;
+const YT_REGEX =
+  /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{11})/;
 
-// Combined split: URLs, nostr:nevent refs, nostr:npub refs, nostr:nprofile refs
 const SPLIT_REGEX =
   /((?:https?:\/\/[^\s]+)|(?:nostr:nevent1[a-z0-9]+)|(?:nostr:nprofile1[a-z0-9]+)|(?:nostr:npub1[a-z0-9]+)|(?:@nprofile1[a-z0-9]+)|(?:@npub1[a-z0-9]+))/gi;
+
+// Split plain-text chunks on hashtags. Bengali script and Latin word chars.
+const HASHTAG_SPLIT = /(#[\u0980-\u09FF\w]+)/g;
 
 function normalizeUrl(u) {
   try {
@@ -25,41 +29,70 @@ export function NoteContent({
   warningReason,
   skipUrls = [],
 }) {
+  const searchCtx = useSearchContext();
+  const onTagClick = searchCtx?.onSearchRequest;
+
   if (!content) return null;
 
   const parts = content.split(SPLIT_REGEX);
+
+  // Render a plain-text chunk, turning hashtags into clickable elements.
+  const renderPlainText = (text, outerKey) => {
+    if (!onTagClick) return <span key={outerKey}>{text}</span>;
+
+    const pieces = text.split(HASHTAG_SPLIT);
+    return (
+      <span key={outerKey}>
+        {pieces.map((piece, j) => {
+          if (piece.startsWith("#") && piece.length > 1) {
+            return (
+              <button
+                key={`${outerKey}-${j}`}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTagClick(piece);
+                }}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                {piece}
+              </button>
+            );
+          }
+          return <span key={`${outerKey}-${j}`}>{piece}</span>;
+        })}
+      </span>
+    );
+  };
 
   return (
     <div className="mt-1 text-gray-900 leading-relaxed whitespace-pre-wrap break-words">
       {parts.map((part, i) => {
         if (!part) return null;
 
-        // --- nostr:nevent1... reference ---
+        // --- nostr:nevent1... quote ---
         const neventMatch = part.match(/^nostr:(nevent1[a-z0-9]+)$/i);
         if (neventMatch) {
           return <EmbeddedNote key={i} neventId={neventMatch[1]} />;
         }
 
-        // --- nostr:npub1... or nostr:nprofile1... mention ---
-        const mentionMatch = part.match(
+        // --- nostr:npub1... / nostr:nprofile1... ---
+        const nostrMention = part.match(
           /^nostr:((?:npub1|nprofile1)[a-z0-9]+)$/i
         );
-        if (mentionMatch) {
-          return <Mention key={i} npubId={mentionMatch[1]} />;
+        if (nostrMention) {
+          return <Mention key={i} npubId={nostrMention[1]} />;
         }
 
-        // --- @npub1... / @nprofile1... mention (no nostr: prefix) ---
-        const atMentionMatch = part.match(
-          /^@((?:npub1|nprofile1)[a-z0-9]+)$/i
-        );
-        if (atMentionMatch) {
-          return <Mention key={i} npubId={atMentionMatch[1]} />;
+        // --- @npub1... / @nprofile1... ---
+        const atMention = part.match(/^@((?:npub1|nprofile1)[a-z0-9]+)$/i);
+        if (atMention) {
+          return <Mention key={i} npubId={atMention[1]} />;
         }
 
-
-        // --- Plain text ---
+        // --- Plain text (may contain hashtags) ---
         if (!/^https?:\/\//.test(part)) {
-          return <span key={i}>{part}</span>;
+          return renderPlainText(part, i);
         }
 
         // --- URL handling ---
@@ -70,7 +103,6 @@ export function NoteContent({
           return null;
         }
 
-        // YouTube embed
         const ytMatch = url.match(YT_REGEX);
         if (ytMatch) {
           const iframe = (
@@ -93,7 +125,6 @@ export function NoteContent({
           );
         }
 
-        // Inline image
         if (IMAGE_EXT.test(url)) {
           const img = (
             <a
@@ -119,7 +150,6 @@ export function NoteContent({
           );
         }
 
-        // Regular link
         return (
           <span key={i}>
             <a

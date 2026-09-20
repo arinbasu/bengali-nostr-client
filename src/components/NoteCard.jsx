@@ -3,7 +3,9 @@ import { nip19 } from "nostr-tools";
 import {
   publishReactionWithSigner,
   publishRepostWithSigner,
+  publishDeletionWithSigner,
   fetchReplies,
+  buildNoteLink,
 } from "../lib/nostr";
 import { useAccount } from "../contexts/useAccount";
 import { useProfile, getDisplayName } from "../contexts/useProfile";
@@ -19,7 +21,10 @@ function truncateContent(text, maxLength) {
   if (text.length <= maxLength) return text;
   const cut = text.slice(0, maxLength);
   const lastBreak = Math.max(cut.lastIndexOf(" "), cut.lastIndexOf("\n"));
-  return (lastBreak > maxLength * 0.7 ? cut.slice(0, lastBreak) : cut).trimEnd() + "…";
+  return (
+    (lastBreak > maxLength * 0.7 ? cut.slice(0, lastBreak) : cut).trimEnd() +
+    "…"
+  );
 }
 
 function timeAgo(timestamp) {
@@ -58,6 +63,11 @@ export function NoteCard({ event }) {
   const [expanded, setExpanded] = useState(false);
   const [showThread, setShowThread] = useState(false);
   const [replyCount, setReplyCount] = useState(null);
+  const [deleted, setDeleted] = useState(false);
+
+  // Menu state
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const { account, following, follow, unfollow } = useAccount();
   const { profiles } = useProfile();
@@ -89,6 +99,7 @@ export function NoteCard({ event }) {
       ? truncateContent(event.content, TRUNCATE_LENGTH)
       : event.content;
 
+  // Fetch reply count (disabled earlier — keep off to avoid REQ storms)
   useEffect(() => {
     return;
   }, [event.id]);
@@ -99,8 +110,7 @@ export function NoteCard({ event }) {
   };
 
   const handleReaction = async (type) => {
-    if (!account?.signer) return;          // ← signer, not secretKey
-
+    if (!account?.signer) return;
     const isHeart = type === "heart";
     const alreadyReacted = isHeart ? hasHeart : hasThumb;
     if (alreadyReacted) return;
@@ -134,7 +144,7 @@ export function NoteCard({ event }) {
   };
 
   const handleRepost = async () => {
-    if (hasReposted || !account?.signer) return;   // ← signer, not secretKey
+    if (hasReposted || !account?.signer) return;
     setHasReposted(true);
     try {
       await publishRepostWithSigner(event, account.signer);
@@ -143,6 +153,32 @@ export function NoteCard({ event }) {
       setHasReposted(false);
     }
   };
+
+  const handleCopyLink = async () => {
+    const link = buildNoteLink(event);
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      window.prompt("এই লিঙ্কটি কপি করুন:", link);
+    }
+    setMenuOpen(false);
+  };
+
+  const handleDelete = async () => {
+    if (!account?.signer) return;
+    if (!window.confirm("পোস্টটি মুছে ফেলবেন? এটি ফিরিয়ে আনা যাবে না।")) return;
+    setMenuOpen(false);
+    try {
+      await publishDeletionWithSigner([event.id], account.signer);
+      setDeleted(true);
+    } catch (err) {
+      console.error("Failed to delete:", err);
+    }
+  };
+
+  if (deleted) return null;
 
   return (
     <div className="bg-white px-4 py-3 border-b border-gray-100">
@@ -185,7 +221,58 @@ export function NoteCard({ event }) {
             )}
 
             <span>·</span>
-            <span>{timeAgo(event.created_at)}</span>
+            <a
+              href={buildNoteLink(event)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:underline"
+              title="njump.me-এ খুলুন"
+            >
+              {timeAgo(event.created_at)}
+            </a>
+
+            {/* ⋯ menu — on every note */}
+            <div className="ml-auto relative">
+              <button
+                onClick={() => setMenuOpen((v) => !v)}
+                className="text-gray-400 hover:text-gray-700 px-2 text-lg leading-none"
+                title="আরও"
+              >
+                ⋯
+              </button>
+              {menuOpen && (
+                <div className="absolute right-0 top-7 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-48">
+                  <button
+                    onClick={handleCopyLink}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    {copied ? "কপি হয়েছে ✅" : "লিঙ্ক কপি করুন"}
+                  </button>
+
+                  <a
+                    href={buildNoteLink(event)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setMenuOpen(false)}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    njump.me-এ খুলুন
+                  </a>
+
+                  {isOwnNote && (
+                    <>
+                      <div className="border-t border-gray-100 my-1" />
+                      <button
+                        onClick={handleDelete}
+                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                      >
+                        মুছে ফেলুন
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <ReplyContext event={event} />
@@ -266,7 +353,9 @@ export function NoteCard({ event }) {
                 hasThumb ? "text-blue-600" : "hover:text-blue-600"
               }`}
             >
-              <span className="text-lg">{hasThumb ? "👍" : "👍🏻"}</span>
+              <span className={`text-lg ${hasThumb ? "" : "opacity-40"}`}>
+                👍
+              </span>
               <span className="text-sm">
                 {thumbCount > 0 ? thumbCount : "পছন্দ"}
               </span>

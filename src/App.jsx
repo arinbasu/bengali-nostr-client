@@ -11,6 +11,7 @@ import { ExploreView } from "./components/ExploreView";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ProfileSetupPage } from "./components/ProfileSetupPage";
 import { useAccount } from "./contexts/useAccount";
+import { SearchContext } from "./contexts/SearchContext";
 
 export default function App() {
   const { account, loading, following } = useAccount();
@@ -27,7 +28,6 @@ export default function App() {
   const [showProfileSetup, setShowProfileSetup] = useState(false);
   const [pendingSearch, setPendingSearch] = useState(null);
 
-  // Show profile setup page for brand new accounts
   useEffect(() => {
     if (
       account &&
@@ -60,8 +60,6 @@ export default function App() {
     });
   };
 
-  // Called when a hashtag is clicked in Explore — switches to the
-  // Search tab and passes the query along so it runs automatically.
   const handleSearchRequest = (query) => {
     setPendingSearch(query);
     setTab("search");
@@ -86,72 +84,74 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-bg">
-      <Header />
-      <main className="max-w-xl mx-auto border-x border-border min-h-screen pb-16">
-        {tab === "home" && (
-          <>
-            <div className="flex items-center border-b border-gray-200">
-              <button
-                onClick={() => setFeedMode("global")}
-                className={`px-4 py-2 text-sm font-medium ${
-                  feedMode === "global"
-                    ? "text-blue-600 border-b-2 border-blue-600"
-                    : "text-gray-500"
-                }`}
-              >
-                গ্লোবাল
-              </button>
-              <button
-                onClick={() => setFeedMode("following")}
-                className={`px-4 py-2 text-sm font-medium ${
-                  feedMode === "following"
-                    ? "text-blue-600 border-b-2 border-blue-600"
-                    : "text-gray-500"
-                }`}
-              >
-                অনুসরণ
-              </button>
+    <SearchContext.Provider value={{ onSearchRequest: handleSearchRequest }}>
+      <div className="min-h-screen bg-bg">
+        <Header />
+        <main className="max-w-xl mx-auto border-x border-border min-h-screen pb-16">
+          {tab === "home" && (
+            <>
+              <div className="flex items-center border-b border-gray-200">
+                <button
+                  onClick={() => setFeedMode("global")}
+                  className={`px-4 py-2 text-sm font-medium ${
+                    feedMode === "global"
+                      ? "text-blue-600 border-b-2 border-blue-600"
+                      : "text-gray-500"
+                  }`}
+                >
+                  গ্লোবাল
+                </button>
+                <button
+                  onClick={() => setFeedMode("following")}
+                  className={`px-4 py-2 text-sm font-medium ${
+                    feedMode === "following"
+                      ? "text-blue-600 border-b-2 border-blue-600"
+                      : "text-gray-500"
+                  }`}
+                >
+                  অনুসরণ
+                </button>
 
-              <button
-                onClick={toggleLangFilter}
-                title={
-                  langFilter === "bengali"
-                    ? "এই মুহূর্তে: শুধু বাংলা পোস্ট। সব ভাষা দেখতে চাপ দিন।"
-                    : "এই মুহূর্তে: বাংলা ও ইংরেজি পোস্ট। শুধু বাংলা দেখতে চাপ দিন।"
-                }
-                className={`ml-auto mr-3 text-xs px-2 py-1 rounded-full border transition ${
-                  langFilter === "bengali"
-                    ? "border-blue-500 text-blue-600 bg-blue-50"
-                    : "border-gray-300 text-gray-500 bg-white"
-                }`}
-              >
-                {langFilter === "bengali" ? "অ" : "অ EN"}
-              </button>
-            </div>
-            <NoteComposer onPublished={handlePublished} />
-            <NoteList
-              refreshTrigger={refreshTrigger}
-              newNotes={newNotes}
-              feedMode={feedMode}
-              following={following}
-              langFilter={langFilter}
+                <button
+                  onClick={toggleLangFilter}
+                  title={
+                    langFilter === "bengali"
+                      ? "এই মুহূর্তে: শুধু বাংলা পোস্ট। সব ভাষা দেখতে চাপ দিন।"
+                      : "এই মুহূর্তে: বাংলা ও ইংরেজি পোস্ট। শুধু বাংলা দেখতে চাপ দিন।"
+                  }
+                  className={`ml-auto mr-3 text-xs px-2 py-1 rounded-full border transition ${
+                    langFilter === "bengali"
+                      ? "border-blue-500 text-blue-600 bg-blue-50"
+                      : "border-gray-300 text-gray-500 bg-white"
+                  }`}
+                >
+                  {langFilter === "bengali" ? "অ" : "অ EN"}
+                </button>
+              </div>
+              <NoteComposer onPublished={handlePublished} />
+              <NoteList
+                refreshTrigger={refreshTrigger}
+                newNotes={newNotes}
+                feedMode={feedMode}
+                following={following}
+                langFilter={langFilter}
+              />
+            </>
+          )}
+          {tab === "explore" && (
+            <ExploreView onSearchRequest={handleSearchRequest} />
+          )}
+          {tab === "search" && (
+            <SearchView
+              initialQuery={pendingSearch}
+              onQueryConsumed={() => setPendingSearch(null)}
             />
-          </>
-        )}
-        {tab === "explore" && (
-          <ExploreView onSearchRequest={handleSearchRequest} />
-        )}
-        {tab === "search" && (
-          <SearchView
-            initialQuery={pendingSearch}
-            onQueryConsumed={() => setPendingSearch(null)}
-          />
-        )}
-        {tab === "notifications" && <NotificationsView />}
-        {tab === "profile" && <ProfileView />}
-      </main>
-      <BottomNav current={tab} onChange={setTab} />
-    </div>
+          )}
+          {tab === "notifications" && <NotificationsView />}
+          {tab === "profile" && <ProfileView />}
+        </main>
+        <BottomNav current={tab} onChange={setTab} />
+      </div>
+    </SearchContext.Provider>
   );
 }

@@ -25,6 +25,18 @@ export const SEARCH_RELAYS = [
 
 const STORAGE_KEY = "balaka_nsec";
 
+// Build a shareable njump.me URL for a note.
+// Includes relay hints so njump can find it quickly.
+export function buildNoteLink(event) {
+  const nevent = nip19.neventEncode({
+    id: event.id,
+    author: event.pubkey,
+    kind: event.kind,
+    relays: DEFAULT_RELAYS,
+  });
+  return `https://njump.me/${nevent}`;
+}
+
 // One pool for everything — reads and writes.
 const pool = new SimplePool();
 

@@ -6,9 +6,9 @@ import { useProfile } from "../contexts/useProfile";
 import { useMentions } from "../hooks/useMentions";
 import { MentionDropdown } from "./MentionDropdown";
 
-const MAX_LENGTH = 5000;
+const MAX_LENGTH = 350;
 const MIN_HEIGHT = 60;
-const MAX_HEIGHT = 240;
+const MAX_HEIGHT = 150;
 
 // Auto-growing textarea. No forwardRef — accepts `innerRef` as a
 // regular prop, which works in both React 18 and React 19 and avoids
@@ -22,7 +22,7 @@ function AutoGrowTextarea({ placeholder, className, innerRef, ...props }) {
     el.style.height = "auto";
     el.style.height =
       Math.min(Math.max(el.scrollHeight, MIN_HEIGHT), MAX_HEIGHT) + "px";
-  }, [props.value]);
+  });
 
   const setRef = (node) => {
     localRef.current = node;

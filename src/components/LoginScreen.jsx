@@ -11,7 +11,11 @@ import { CraneIcon } from "./CraneIcon";
 
 export function LoginScreen() {
   const { login } = useAccount();
-  const [tab, setTab] = useState("new"); // new | nsec | npub | bunker
+
+  // "default" | "nsec" | "npub" | "bunker"
+  const [mode, setMode] = useState("default");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const [input, setInput] = useState("");
   const [error, setError] = useState("");
   const [newAccount, setNewAccount] = useState(null);
@@ -20,7 +24,6 @@ export function LoginScreen() {
   const [extensionConnecting, setExtensionConnecting] = useState(false);
   const [bunkerConnecting, setBunkerConnecting] = useState(false);
 
-  // Poll for window.nostr for 2 seconds (extensions inject at different times)
   useEffect(() => {
     let attempts = 0;
     const check = () => {
@@ -34,7 +37,7 @@ export function LoginScreen() {
     check();
   }, []);
 
-  // --- New account ---
+  // ---------- New account ----------
   const handleNewAccount = () => {
     const secretKey = generateSecretKey();
     const pubkey = getPublicKey(secretKey);
@@ -55,11 +58,11 @@ export function LoginScreen() {
     });
   };
 
-  // --- nsec / npub import ---
+  // ---------- nsec / npub import ----------
   const handleImport = () => {
     setError("");
     try {
-      if (tab === "nsec") {
+      if (mode === "nsec") {
         const { type, data } = nip19.decode(input.trim());
         if (type !== "nsec") throw new Error("Not an nsec");
         const signer = new LocalSigner(data);
@@ -71,10 +74,9 @@ export function LoginScreen() {
           loginType: "local",
           nsec: input.trim(),
         });
-      } else if (tab === "npub") {
+      } else if (mode === "npub") {
         const { type, data } = nip19.decode(input.trim());
         if (type !== "npub") throw new Error("Not an npub");
-        // View-only login — no signer, no secretKey
         login({
           signer: null,
           publicKey: data,
@@ -83,11 +85,11 @@ export function LoginScreen() {
         });
       }
     } catch (err) {
-      setError(err.message || "অবৈধ কী");
+      setError("অবৈধ কী");
     }
   };
 
-  // --- NIP-07 extension ---
+  // ---------- NIP-07 extension ----------
   const handleExtensionLogin = async () => {
     setError("");
     setExtensionConnecting(true);
@@ -98,13 +100,13 @@ export function LoginScreen() {
       login({ signer, publicKey: pubkey, npub, loginType: "nip07" });
     } catch (err) {
       console.error(err);
-      setError("এক্সটেনশনে অনুমোদন দেওয়া হয়নি বা এক্সটেনশন পাওয়া যায়নি");
+      setError("এক্সটেনশনে অনুমোদন দেওয়া হয়নি");
     } finally {
       setExtensionConnecting(false);
     }
   };
 
-  // --- NIP-46 bunker ---
+  // ---------- NIP-46 bunker ----------
   const handleBunkerLogin = async (uri) => {
     setError("");
     if (!uri.trim()) return;
@@ -118,7 +120,7 @@ export function LoginScreen() {
       login({ signer, publicKey: pubkey, npub, loginType: "nip46" });
     } catch (err) {
       console.error(err);
-      setError("বাঙ্কারে সংযুক্ত করা যায়নি: " + (err?.message || ""));
+      setError("বাঙ্কারে সংযুক্ত করা যায়নি");
     } finally {
       setBunkerConnecting(false);
     }
@@ -128,6 +130,12 @@ export function LoginScreen() {
     navigator.clipboard.writeText(value);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 1500);
+  };
+
+  const resetToDefault = () => {
+    setMode("default");
+    setInput("");
+    setError("");
   };
 
   // ========================= BACKUP SCREEN =========================
@@ -160,7 +168,7 @@ export function LoginScreen() {
             </p>
             <p className="text-xs text-gray-500 mt-2 leading-relaxed">
               এটি নিরাপদে শেয়ার করতে পারেন। বন্ধুরা এই ঠিকানা দিয়েই আপনাকে
-              খুঁজে পাবে এবং অনুসরণ করতে পারবে।
+              খুঁজে পাবে।
             </p>
           </div>
 
@@ -180,9 +188,9 @@ export function LoginScreen() {
               {newAccount.nsec}
             </p>
             <p className="text-xs text-yellow-800 mt-2 leading-relaxed">
-              এটি আপনার পরিচয়ের প্রমাণ। কোনো সার্ভারে যায় না, শুধু আপনার
-              কাছেই থাকে। <strong>এটি হারালে পরিচয় চিরতরে হারিয়ে যাবে।</strong>{" "}
-              কারও সাথে শেয়ার করবেন না।
+              এটি আপনার পরিচয়ের প্রমাণ।{" "}
+              <strong>এটি হারালে পরিচয় চিরতরে হারিয়ে যাবে।</strong> কারও
+              সাথে শেয়ার করবেন না।
             </p>
           </div>
 
@@ -195,7 +203,7 @@ export function LoginScreen() {
 
           <button
             onClick={handleConfirmBackup}
-            className="w-full bg-primary text-primary-text py-3 rounded-full font-medium hover:opacity-90"
+            className="w-full bg-blue-600 text-white py-3 rounded-full font-medium hover:bg-blue-700"
           >
             শুরু করুন
           </button>
@@ -213,124 +221,150 @@ export function LoginScreen() {
           <h1 className="text-2xl font-bold text-text">বলাকা</h1>
         </div>
 
-        <p className="text-sm text-muted mb-6 leading-relaxed">
-          শুরু করতে একটি অ্যাকাউন্ট তৈরি করুন, অথবা আপনার আগের নস্ট্র
-          পরিচয় দিয়ে প্রবেশ করুন।
-        </p>
+        {/* ============ DEFAULT VIEW: two choices ============ */}
+        {mode === "default" && (
+          <>
+            <p className="text-sm text-muted mb-6 leading-relaxed">
+              বলাকা বাংলায় লেখার একটি জায়গা। শুরু করতে একটি অ্যাকাউন্ট
+              তৈরি করুন।
+            </p>
 
-        {/* Tabs */}
-        <div className="grid grid-cols-4 gap-1 mb-6">
-          <button
-            onClick={() => setTab("new")}
-            className={`py-2 rounded-lg text-xs font-medium ${
-              tab === "new" ? "bg-primary text-primary-text" : "bg-bg text-muted"
-            }`}
-          >
-            নতুন
-          </button>
-          <button
-            onClick={() => setTab("nsec")}
-            className={`py-2 rounded-lg text-xs font-medium ${
-              tab === "nsec" ? "bg-primary text-primary-text" : "bg-bg text-muted"
-            }`}
-          >
-            nsec
-          </button>
-          <button
-            onClick={() => setTab("npub")}
-            className={`py-2 rounded-lg text-xs font-medium ${
-              tab === "npub" ? "bg-primary text-primary-text" : "bg-bg text-muted"
-            }`}
-          >
-            npub
-          </button>
-          <button
-            onClick={() => setTab("bunker")}
-            className={`py-2 rounded-lg text-xs font-medium ${
-              tab === "bunker" ? "bg-primary text-primary-text" : "bg-bg text-muted"
-            }`}
-          >
-            Bunker
-          </button>
-        </div>
+            <button
+              onClick={handleNewAccount}
+              className="w-full bg-blue-600 text-white py-4 rounded-full font-medium hover:bg-blue-700 mb-3 text-base"
+            >
+              নতুন অ্যাকাউন্ট তৈরি করুন
+            </button>
 
-        {/* New account */}
-        {tab === "new" && (
-          <button
-            onClick={handleNewAccount}
-            className="w-full bg-primary text-primary-text py-3 rounded-full font-medium hover:opacity-90"
-          >
-            নতুন অ্যাকাউন্ট তৈরি করুন
-          </button>
+            <button
+              onClick={() => setMode("nsec")}
+              className="w-full py-3 rounded-full border border-gray-300 text-gray-700 font-medium hover:bg-gray-50"
+            >
+              আমার আগের nsec আছে
+            </button>
+
+            {extensionAvailable && (
+              <div className="mt-5 pt-5 border-t border-gray-200">
+                <button
+                  onClick={handleExtensionLogin}
+                  disabled={extensionConnecting}
+                  className="w-full py-3 rounded-full border border-blue-500 text-blue-600 font-medium hover:bg-blue-50 disabled:opacity-50"
+                >
+                  {extensionConnecting
+                    ? "এক্সটেনশনে অনুমোদনের জন্য অপেক্ষা..."
+                    : "ব্রাউজার এক্সটেনশন দিয়ে প্রবেশ"}
+                </button>
+                <p className="text-xs text-muted mt-2 text-center">
+                  Alby, nos2x, বা অন্য NIP-07 এক্সটেনশন পাওয়া গেছে
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="w-full mt-4 text-xs text-gray-500 hover:text-gray-700"
+            >
+              {showAdvanced ? "আরও অপশন লুকান ▴" : "আরও অপশন ▾"}
+            </button>
+
+            {showAdvanced && (
+              <div className="mt-3 pt-3 border-t border-gray-200 space-y-2">
+                <button
+                  onClick={() => setMode("npub")}
+                  className="w-full py-2 text-sm text-gray-600 hover:text-gray-900 text-left px-3"
+                >
+                  npub দিয়ে শুধু পড়তে চাই
+                </button>
+                <button
+                  onClick={() => setMode("bunker")}
+                  className="w-full py-2 text-sm text-gray-600 hover:text-gray-900 text-left px-3"
+                >
+                  Bunker (Amber, nsec.app)
+                </button>
+              </div>
+            )}
+          </>
         )}
 
-        {/* nsec / npub */}
-        {(tab === "nsec" || tab === "npub") && (
-          <div>
+        {/* ============ nsec / npub input ============ */}
+        {(mode === "nsec" || mode === "npub") && (
+          <>
+            <h2 className="text-lg font-bold text-text mb-2">
+              {mode === "nsec"
+                ? "আপনার nsec দিন"
+                : "আপনার npub দিন"}
+            </h2>
+            <p className="text-xs text-muted mb-4 leading-relaxed">
+              {mode === "nsec"
+                ? "আপনার গোপন চাবি। এটি শুধু আপনার ব্রাউজারে থাকবে — কোথাও পাঠানো হবে না।"
+                : "npub দিয়ে ঢুকলে আপনি পড়তে পারবেন, কিন্তু পোস্ট করতে পারবেন না।"}
+            </p>
+
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={tab === "nsec" ? "nsec1..." : "npub1..."}
-              className="w-full p-3 bg-bg border border-border rounded-lg mb-4 text-text"
+              placeholder={mode === "nsec" ? "nsec1..." : "npub1..."}
+              className="w-full p-3 bg-bg border border-border rounded-lg mb-3 text-text text-sm"
+              autoFocus
             />
-            {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+
+            {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
+
             <button
               onClick={handleImport}
-              className="w-full bg-primary text-primary-text py-3 rounded-full font-medium hover:opacity-90"
+              className="w-full bg-blue-600 text-white py-3 rounded-full font-medium hover:bg-blue-700 mb-3"
             >
               প্রবেশ করুন
             </button>
-            {tab === "npub" && (
-              <p className="text-xs text-muted mt-3 text-center leading-relaxed">
-                npub দিয়ে প্রবেশ করলে আপনি দেখতে পাবেন, কিন্তু পোস্ট
-                করতে পারবেন না।
-              </p>
-            )}
-          </div>
+
+            <button
+              onClick={resetToDefault}
+              className="w-full text-sm text-gray-500 hover:text-gray-700"
+            >
+              ← ফিরে যান
+            </button>
+          </>
         )}
 
-        {/* Bunker */}
-        {tab === "bunker" && (
-          <div>
+        {/* ============ Bunker input ============ */}
+        {mode === "bunker" && (
+          <>
+            <h2 className="text-lg font-bold text-text mb-2">
+              Bunker সংযুক্ত করুন
+            </h2>
+            <p className="text-xs text-muted mb-4 leading-relaxed">
+              Amber, nsec.app, বা অন্য NIP-46 সাইন অ্যাপ থেকে একটি{" "}
+              <code className="bg-gray-100 px-1 rounded">bunker://</code>{" "}
+              লিঙ্ক পান এবং এখানে পেস্ট করুন।
+            </p>
+
             <input
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="bunker://..."
-              className="w-full p-3 bg-bg border border-border rounded-lg mb-4 text-text text-sm"
+              className="w-full p-3 bg-bg border border-border rounded-lg mb-3 text-text text-sm"
+              autoFocus
             />
-            {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+
+            {error && <p className="text-red-500 text-sm mb-3">{error}</p>}
+
             <button
               onClick={() => handleBunkerLogin(input)}
               disabled={bunkerConnecting}
-              className="w-full bg-primary text-primary-text py-3 rounded-full font-medium hover:opacity-90 disabled:opacity-50"
+              className="w-full bg-blue-600 text-white py-3 rounded-full font-medium hover:bg-blue-700 disabled:opacity-50 mb-3"
             >
               {bunkerConnecting ? "সংযুক্ত হচ্ছে..." : "সংযুক্ত করুন"}
             </button>
-            <p className="text-xs text-muted mt-3 text-center leading-relaxed">
-              Amber, nsec.app, বা যেকোনো NIP-46 সাপোর্টেড সাইনার থেকে
-              bunker:// লিঙ্ক পান।
-            </p>
-          </div>
-        )}
 
-        {/* NIP-07 extension — only when an extension is detected */}
-        {extensionAvailable && (
-          <div className="mt-6 pt-6 border-t border-border">
             <button
-              onClick={handleExtensionLogin}
-              disabled={extensionConnecting}
-              className="w-full py-3 rounded-full border border-blue-500 text-blue-600 font-medium hover:bg-blue-50 disabled:opacity-50"
+              onClick={resetToDefault}
+              className="w-full text-sm text-gray-500 hover:text-gray-700"
             >
-              {extensionConnecting
-                ? "এক্সটেনশনে অনুমোদনের জন্য অপেক্ষা করছি..."
-                : "ব্রাউজার এক্সটেনশন দিয়ে প্রবেশ করুন"}
+              ← ফিরে যান
             </button>
-            <p className="text-xs text-muted mt-2 text-center">
-              Alby, nos2x, বা অন্য NIP-07 এক্সটেনশন পাওয়া গেছে
-            </p>
-          </div>
+          </>
         )}
       </div>
     </div>
