@@ -86,7 +86,7 @@ export default function App() {
   return (
     <SearchContext.Provider value={{ onSearchRequest: handleSearchRequest }}>
       <div className="min-h-screen bg-bg">
-        <Header />
+        <Header onHome={() => setTab("home")} />
         <main className="max-w-xl mx-auto border-x border-border min-h-screen pb-16">
           {tab === "home" && (
             <>
